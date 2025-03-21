@@ -88,7 +88,7 @@ jobs:
           terraform show -json tfplan > plan.json
 
       - name: Store Plan Artifact
-        uses: actions/upload-artifact@v2.3.1
+        uses: actions/upload-artifact@v4
 
         with:
           name: terraform-dev-plan
