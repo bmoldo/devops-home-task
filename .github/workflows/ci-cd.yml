@@ -3,6 +3,13 @@ name: Development Pipeline
 on:
   push:
     branches: [ development ]
+    paths:
+      - 'app/**'
+      - 'terraform/**'
+      - 'requirements.txt'
+      - 'Dockerfile'
+      - 'setup.py'
+      - '.github/workflows/dev-pipeline.yml'
   workflow_dispatch:
 
 permissions:
@@ -182,16 +189,19 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
 
-      - name: Get Dev ECR repository URI
+      - name: Get ECR Repository Info
         id: get-ecr
         run: |
-          ECR_REPO=$(aws ecr describe-repositories --repository-names ${{ github.event.repository.name }}-dev || echo "not exists")
+          # Using our terraform naming scheme: user-api-dev
+          ECR_REPO_NAME="user-api-dev"
+          ECR_REPO=$(aws ecr describe-repositories --repository-names $ECR_REPO_NAME || echo "not exists")
+          
           if [[ $ECR_REPO == *"not exists"* ]]; then
-            echo "ECR repository does not exist. Creating it..."
-            aws ecr create-repository --repository-name ${{ github.event.repository.name }}-dev --image-scanning-configuration scanOnPush=true
+            echo "ECR repository does not exist. Check Terraform deployment."
+            exit 1
           fi
           
-          ECR_REPO_URI=$(aws ecr describe-repositories --repository-names ${{ github.event.repository.name }}-dev --query 'repositories[0].repositoryUri' --output text)
+          ECR_REPO_URI=$(aws ecr describe-repositories --repository-names $ECR_REPO_NAME --query 'repositories[0].repositoryUri' --output text)
           echo "ecr_repo_uri=$ECR_REPO_URI" >> $GITHUB_OUTPUT
 
       - name: Login to Amazon ECR
@@ -220,16 +230,12 @@ jobs:
       - name: Create deployment record
         run: |
           echo "{\"image\":\"${{ steps.get-ecr.outputs.ecr_repo_uri }}:${{ steps.set-tags.outputs.git_sha_tag }}\",\"timestamp\":\"$(date -u +"%Y-%m-%dT%H:%M:%SZ")\",\"git_sha\":\"${{ github.sha }}\",\"git_ref\":\"${{ github.ref }}\"}" > deployment.json
-          aws s3 cp deployment.json s3://${{ secrets.DEPLOYMENT_BUCKET }}/dev/deployments/${{ steps.set-tags.outputs.timestamp_tag }}.json
+          aws s3 cp deployment.json s3://user-queries-dev/deployments/${{ steps.set-tags.outputs.timestamp_tag }}.json
 
-      - name: Create Lambda deployment package
+      - name: Update Lambda function with ECR image
         run: |
-          bash ./create_lambda_package.sh
-          zip -r lambda_function.zip ./lambda_package
-
-      - name: Update Lambda function
-        run: |
-          LAMBDA_FUNCTION_NAME="${{ github.event.repository.name }}-dev-lambda"
+          # Using our terraform naming scheme: user-api-dev
+          LAMBDA_FUNCTION_NAME="user-api-dev"
           
           # Check if function exists
           LAMBDA_EXISTS=$(aws lambda get-function --function-name $LAMBDA_FUNCTION_NAME 2>&1 || echo "not exists")
@@ -239,19 +245,16 @@ jobs:
             exit 1
           fi
           
-          # Update Lambda function code
+          # Update Lambda function code with the new container image
           aws lambda update-function-code \
             --function-name $LAMBDA_FUNCTION_NAME \
-            --zip-file fileb://lambda_function.zip
-          
-          # Update Lambda function configuration
-          aws lambda update-function-configuration \
-            --function-name $LAMBDA_FUNCTION_NAME \
-            --environment "Variables={DATABASE_URL=${{ secrets.DATABASE_URL }},ENVIRONMENT=dev,AWS_DEFAULT_REGION=us-east-1,S3_BUCKET_NAME=${{ secrets.S3_BUCKET_NAME }}}"
+            --image-uri ${{ steps.get-ecr.outputs.ecr_repo_uri }}:${{ steps.set-tags.outputs.git_sha_tag }}
 
-      - name: Deploy API Gateway
+      - name: Update API Gateway
         run: |
-          API_ID=$(aws apigateway get-rest-apis --query "items[?name=='${{ github.event.repository.name }}-dev-api'].id" --output text)
+          # Using our terraform naming scheme: user-api-dev
+          API_NAME="user-api-dev"
+          API_ID=$(aws apigateway get-rest-apis --query "items[?name=='$API_NAME'].id" --output text)
           
           if [ -z "$API_ID" ]; then
             echo "API Gateway doesn't exist. Please check Terraform output."
@@ -261,4 +264,5 @@ jobs:
           # Create deployment
           aws apigateway create-deployment \
             --rest-api-id $API_ID \
-            --stage-name dev
+            --stage-name dev \
+            --description "Deployment from GitHub Actions - ${{ steps.set-tags.outputs.git_sha_tag }}"
