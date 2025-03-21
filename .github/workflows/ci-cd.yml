@@ -1,15 +1,8 @@
-# .github/workflows/terraform.yml
-name: Terraform Pipeline
+name: Development Pipeline
 
 on:
   push:
-    branches: [ main ]
-    paths:
-      - 'terraform/**'
-  pull_request:
-    branches: [ main ]
-    paths:
-      - 'terraform/**'
+    branches: [ development ]
   workflow_dispatch:
 
 permissions:
@@ -17,10 +10,10 @@ permissions:
   id-token: write
 
 jobs:
-  terraform:
-    name: Terraform
+  terraform-dev:
+    name: Terraform Dev Infrastructure
     runs-on: ubuntu-latest
-    environment: ${{ github.event_name == 'push' && 'dev' || 'pr' }}
+    environment: dev
     
     steps:
       - name: Checkout code
@@ -31,7 +24,7 @@ jobs:
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_DEFAULT_REGION }}
+          aws-region: us-east-1
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
@@ -56,7 +49,7 @@ jobs:
         run: |
           aws s3api create-bucket \
             --bucket ${{ steps.check_s3_bucket.outputs.bucket_name }} \
-            --region ${{ secrets.AWS_DEFAULT_REGION }}
+            --region us-east-1
           
           aws s3api put-bucket-versioning \
             --bucket ${{ steps.check_s3_bucket.outputs.bucket_name }} \
@@ -73,7 +66,7 @@ jobs:
             backend "s3" {
               bucket = "${{ steps.check_s3_bucket.outputs.bucket_name }}"
               key    = "terraform/dev/terraform.tfstate"
-              region = "${{ secrets.AWS_DEFAULT_REGION }}"
+              region = "us-east-1"
             }
           }
           EOF
@@ -100,41 +93,15 @@ jobs:
       - name: Store Plan Artifact
         uses: actions/upload-artifact@v3
         with:
-          name: terraform-plan
+          name: terraform-dev-plan
           path: terraform/environments/dev/plan.json
           retention-days: 5
 
       - name: Terraform Apply
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         working-directory: terraform/environments/dev
         run: terraform apply -auto-approve tfplan
 
-# .github/workflows/app-deploy.yml
-name: Application Pipeline
-
-on:
-  push:
-    branches: [ development ]
-    paths:
-      - 'app/**'
-      - 'requirements.txt'
-      - 'Dockerfile'
-      - 'setup.py'
-  pull_request:
-    branches: [ development ]
-    paths:
-      - 'app/**'
-      - 'requirements.txt'
-      - 'Dockerfile'
-      - 'setup.py'
-  workflow_dispatch:
-
-permissions:
-  contents: read
-  id-token: write
-
-jobs:
-  test:
+  test-app:
     name: Test Application
     runs-on: ubuntu-latest
     
@@ -195,11 +162,11 @@ jobs:
         run: |
           pytest --cov=app tests/ -v
 
-  build-and-deploy:
-    name: Build and Deploy Application
-    needs: test
+  build-and-deploy-dev:
+    name: Build and Deploy to Dev
+    needs: [terraform-dev, test-app]
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    environment: dev
     
     steps:
       - name: Checkout code
@@ -210,26 +177,33 @@ jobs:
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_DEFAULT_REGION }}
+          aws-region: us-east-1
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
 
-      - name: Get ECR repository URI
+      - name: Get Dev ECR repository URI
         id: get-ecr
         run: |
-          ECR_REPO=$(aws ecr describe-repositories --repository-names ${{ github.event.repository.name }} || echo "not exists")
+          ECR_REPO=$(aws ecr describe-repositories --repository-names ${{ github.event.repository.name }}-dev || echo "not exists")
           if [[ $ECR_REPO == *"not exists"* ]]; then
             echo "ECR repository does not exist. Creating it..."
-            aws ecr create-repository --repository-name ${{ github.event.repository.name }} --image-scanning-configuration scanOnPush=true
+            aws ecr create-repository --repository-name ${{ github.event.repository.name }}-dev --image-scanning-configuration scanOnPush=true
           fi
           
-          ECR_REPO_URI=$(aws ecr describe-repositories --repository-names ${{ github.event.repository.name }} --query 'repositories[0].repositoryUri' --output text)
+          ECR_REPO_URI=$(aws ecr describe-repositories --repository-names ${{ github.event.repository.name }}-dev --query 'repositories[0].repositoryUri' --output text)
           echo "ecr_repo_uri=$ECR_REPO_URI" >> $GITHUB_OUTPUT
 
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Set image tags
+        id: set-tags
+        run: |
+          TIMESTAMP=$(date +%Y%m%d%H%M%S)
+          echo "timestamp_tag=${TIMESTAMP}" >> $GITHUB_OUTPUT
+          echo "git_sha_tag=${{ github.sha }}" >> $GITHUB_OUTPUT
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v3
@@ -237,10 +211,16 @@ jobs:
           context: .
           push: true
           tags: |
-            ${{ steps.get-ecr.outputs.ecr_repo_uri }}:${{ github.sha }}
+            ${{ steps.get-ecr.outputs.ecr_repo_uri }}:${{ steps.set-tags.outputs.git_sha_tag }}
+            ${{ steps.get-ecr.outputs.ecr_repo_uri }}:${{ steps.set-tags.outputs.timestamp_tag }}
             ${{ steps.get-ecr.outputs.ecr_repo_uri }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Create deployment record
+        run: |
+          echo "{\"image\":\"${{ steps.get-ecr.outputs.ecr_repo_uri }}:${{ steps.set-tags.outputs.git_sha_tag }}\",\"timestamp\":\"$(date -u +"%Y-%m-%dT%H:%M:%SZ")\",\"git_sha\":\"${{ github.sha }}\",\"git_ref\":\"${{ github.ref }}\"}" > deployment.json
+          aws s3 cp deployment.json s3://${{ secrets.DEPLOYMENT_BUCKET }}/dev/deployments/${{ steps.set-tags.outputs.timestamp_tag }}.json
 
       - name: Create Lambda deployment package
         run: |
@@ -249,13 +229,13 @@ jobs:
 
       - name: Update Lambda function
         run: |
-          LAMBDA_FUNCTION_NAME="${{ github.event.repository.name }}-lambda"
+          LAMBDA_FUNCTION_NAME="${{ github.event.repository.name }}-dev-lambda"
           
           # Check if function exists
           LAMBDA_EXISTS=$(aws lambda get-function --function-name $LAMBDA_FUNCTION_NAME 2>&1 || echo "not exists")
           
           if [[ $LAMBDA_EXISTS == *"not exists"* ]]; then
-            echo "Lambda function doesn't exist. Please run Terraform pipeline first to create the infrastructure."
+            echo "Lambda function doesn't exist. Please check Terraform output."
             exit 1
           fi
           
@@ -267,14 +247,14 @@ jobs:
           # Update Lambda function configuration
           aws lambda update-function-configuration \
             --function-name $LAMBDA_FUNCTION_NAME \
-            --environment "Variables={DATABASE_URL=${{ secrets.DATABASE_URL }},ENVIRONMENT=dev,AWS_DEFAULT_REGION=${{ secrets.AWS_DEFAULT_REGION }},S3_BUCKET_NAME=${{ secrets.S3_BUCKET_NAME }}}"
+            --environment "Variables={DATABASE_URL=${{ secrets.DATABASE_URL }},ENVIRONMENT=dev,AWS_DEFAULT_REGION=us-east-1,S3_BUCKET_NAME=${{ secrets.S3_BUCKET_NAME }}}"
 
       - name: Deploy API Gateway
         run: |
-          API_ID=$(aws apigateway get-rest-apis --query "items[?name=='${{ github.event.repository.name }}-api'].id" --output text)
+          API_ID=$(aws apigateway get-rest-apis --query "items[?name=='${{ github.event.repository.name }}-dev-api'].id" --output text)
           
           if [ -z "$API_ID" ]; then
-            echo "API Gateway doesn't exist. Please run Terraform pipeline first to create the infrastructure."
+            echo "API Gateway doesn't exist. Please check Terraform output."
             exit 1
           fi
           
