@@ -9,7 +9,7 @@ on:
       - 'requirements.txt'
       - 'Dockerfile'
       - 'setup.py'
-      - '.github/workflows/dev-pipeline.yml'
+      - '.github/workflows/ci-cd.yml'
   workflow_dispatch:
 
 permissions:
