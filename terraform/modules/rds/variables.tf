@@ -1,107 +1,91 @@
-variable "environment" {
-  description = "Deployment environment"
-  type        = string
-}
-
 variable "identifier" {
-  description = "Identifier for the RDS instance"
+  description = "The name of the RDS instance"
   type        = string
 }
 
 variable "engine" {
-  description = "Database engine"
+  description = "The database engine to use"
   type        = string
-  default     = "postgres"
 }
 
 variable "engine_version" {
-  description = "Database engine version"
+  description = "The engine version to use"
   type        = string
-  default     = "14"
 }
 
 variable "instance_class" {
-  description = "Instance class for the RDS instance"
+  description = "The instance type of the RDS instance"
   type        = string
-  default     = "db.t3.micro"
 }
 
 variable "allocated_storage" {
-  description = "Allocated storage in GB"
+  description = "The amount of allocated storage"
   type        = number
-  default     = 20
 }
 
 variable "max_allocated_storage" {
-  description = "Maximum allocated storage in GB for autoscaling"
+  description = "The maximum amount of storage to allocate"
   type        = number
-  default     = 100
+  default     = 0
 }
 
 variable "username" {
-  description = "Master username"
+  description = "Username for the master DB user"
   type        = string
 }
 
 variable "database_name" {
-  description = "Name of the database to create"
+  description = "The name of the database to create when the DB instance is created"
   type        = string
 }
 
-variable "subnet_ids" {
-  description = "List of subnet IDs for the DB subnet group"
-  type        = list(string)
-}
-
-variable "security_group_ids" {
-  description = "List of security group IDs for the RDS instance"
-  type        = list(string)
-}
-
-variable "multi_az" {
-  description = "Enable Multi-AZ deployment"
-  type        = bool
-  default     = false
-}
-
 variable "backup_retention_period" {
-  description = "Backup retention period in days"
+  description = "The days to retain backups for"
   type        = number
   default     = 7
 }
 
-variable "backup_window" {
-  description = "Preferred backup window"
-  type        = string
-  default     = "03:00-06:00"
-}
-
-variable "maintenance_window" {
-  description = "Preferred maintenance window"
-  type        = string
-  default     = "Mon:00:00-Mon:03:00"
-}
-
-variable "skip_final_snapshot" {
-  description = "Skip final snapshot when destroying the resource"
+variable "deletion_protection" {
+  description = "If the DB instance should have deletion protection enabled"
   type        = bool
   default     = true
 }
 
-variable "deletion_protection" {
-  description = "Enable deletion protection"
+variable "multi_az" {
+  description = "Specifies if the RDS instance is multi-AZ"
   type        = bool
   default     = false
 }
 
-variable "performance_insights_enabled" {
-  description = "Enable Performance Insights"
+variable "skip_final_snapshot" {
+  description = "Determines whether a final DB snapshot is created before the DB instance is deleted"
   type        = bool
-  default     = true
+  default     = false
 }
 
-variable "password" {
-  description = "Password for the master DB user"
+variable "maintenance_window" {
+  description = "The window to perform maintenance in"
   type        = string
-  sensitive   = true
+  default     = "Mon:00:00-Mon:03:00"
+}
+
+variable "backup_window" {
+  description = "The daily time range during which automated backups are created"
+  type        = string
+  default     = "03:00-06:00"
+}
+
+variable "subnet_ids" {
+  description = "A list of VPC subnet IDs"
+  type        = list(string)
+}
+
+variable "vpc_security_group_ids" {
+  description = "List of VPC security groups to associate"
+  type        = list(string)
+}
+
+variable "environment" {
+  description = "Environment name"
+  type        = string
 }

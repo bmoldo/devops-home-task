@@ -1,6 +1,6 @@
 environment = "dev"
 aws_region  = "us-east-1"
-account_id  = "123456789012"  # Replace with your actual AWS account ID
+account_id  = "070503547773"  # Replace with your actual AWS account ID
 
 # ECR Configuration
 ecr_config = {

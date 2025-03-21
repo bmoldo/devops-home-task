@@ -1,21 +1,10 @@
-variable "environment" {
-  description = "Deployment environment"
-  type        = string
-}
-
 variable "name" {
   description = "Name of the API Gateway"
   type        = string
 }
 
-variable "api_gateway_description" {
-  description = "Description of the API Gateway"
-  type        = string
-  default     = "API Gateway for Lambda function"  # Or leave out the default if you prefer
-}
-
 variable "endpoint_type" {
-  description = "Endpoint type for the API Gateway"
+  description = "Endpoint type of the API Gateway"
   type        = string
   default     = "REGIONAL"
 }
@@ -23,12 +12,13 @@ variable "endpoint_type" {
 variable "stage_name" {
   description = "Name of the deployment stage"
   type        = string
-  default     = "api"
+  default     = "dev"
 }
 
-variable "lambda_function_arn" {
-  description = "Invocation ARN of the Lambda function"
+variable "description" {
+  description = "Description of the API Gateway"
   type        = string
+  default     = ""
 }
 
 variable "lambda_function_name" {
@@ -36,8 +26,12 @@ variable "lambda_function_name" {
   type        = string
 }
 
-variable "description" {
+variable "lambda_function_arn" {
+  description = "ARN of the Lambda function"
   type        = string
-  description = "Description for the API Gateway"
-  default     = "API Gateway"
+}
+
+variable "environment" {
+  description = "Deployment environment"
+  type        = string
 }

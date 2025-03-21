@@ -21,23 +21,22 @@ module "ecr" {
   image_tag_mutability = var.ecr_config.image_tag_mutability
   scan_on_push         = var.ecr_config.scan_on_push
   keep_image_count     = var.ecr_config.keep_image_count
-  
-  # We're using a single-account setup, so we don't need environment principals
 }
 
 # VPC for the application
 module "vpc" {
   source = "../../modules/vpc"
   
-  cidr_block         = var.vpc_config.cidr_block
-  azs                = var.vpc_config.azs
-  public_subnets     = var.vpc_config.public_subnets
-  private_subnets    = var.vpc_config.private_subnets
-  enable_nat_gateway = var.vpc_config.enable_nat_gateway
-  single_nat_gateway = var.vpc_config.single_nat_gateway
-  environment        = var.environment
+  vpc_config = {
+    cidr_block         = var.vpc_config.cidr_block
+    azs                = var.vpc_config.azs
+    public_subnets     = var.vpc_config.public_subnets
+    private_subnets    = var.vpc_config.private_subnets
+    enable_nat_gateway = var.vpc_config.enable_nat_gateway
+    single_nat_gateway = var.vpc_config.single_nat_gateway
+  }
   
-  tags = local.common_tags
+  environment = var.environment
 }
 
 # RDS Database
@@ -63,7 +62,6 @@ module "rds" {
   vpc_security_group_ids  = [module.vpc.default_security_group_id]
   
   environment             = var.environment
-  tags                    = local.common_tags
 }
 
 # S3 Bucket for application data
@@ -75,31 +73,68 @@ module "s3" {
   lifecycle_rules    = var.s3_config.lifecycle_rules
   
   environment        = var.environment
-  tags               = local.common_tags
+}
+
+# Create IAM role for Lambda
+resource "aws_iam_role" "lambda_execution_role" {
+  name = "lambda-execution-role-${var.environment}"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [{
+      Action = "sts:AssumeRole",
+      Effect = "Allow",
+      Principal = {
+        Service = "lambda.amazonaws.com"
+      }
+    }]
+  })
+
+  tags = local.common_tags
+}
+
+# Attach policies to the Lambda execution role
+resource "aws_iam_role_policy_attachment" "lambda_basic" {
+  role       = aws_iam_role.lambda_execution_role.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+resource "aws_iam_role_policy_attachment" "lambda_vpc_access" {
+  role       = aws_iam_role.lambda_execution_role.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
+}
+
+# Lambda CloudWatch Logs
+resource "aws_cloudwatch_log_group" "lambda_logs" {
+  name              = "/aws/lambda/${var.lambda_config.function_name}-${local.env_suffix}"
+  retention_in_days = var.lambda_config.log_retention_in_days
+  tags              = local.common_tags
 }
 
 # Lambda function for API
 module "lambda" {
   source = "../../modules/lambda"
   
-  function_name         = "${var.lambda_config.function_name}-${local.env_suffix}"
-  runtime               = var.lambda_config.runtime
-  memory_size           = var.lambda_config.memory_size
-  timeout               = var.lambda_config.timeout
-  log_retention_in_days = var.lambda_config.log_retention_in_days
-  handler               = var.lambda_config.handler
+  function_name       = "${var.lambda_config.function_name}-${local.env_suffix}"
+  image_uri           = "${module.ecr.repository_url}:latest"  # Using the latest image from ECR
+  execution_role_arn  = aws_iam_role.lambda_execution_role.arn
+  
+  memory_size         = var.lambda_config.memory_size
+  timeout             = var.lambda_config.timeout
+  
+  vpc_config = {
+    subnet_ids         = module.vpc.private_subnet_ids
+    security_group_ids = [module.vpc.lambda_security_group_id]
+  }
+  
   environment_variables = merge(var.lambda_config.environment_variables, {
-    DATABASE_URL  = module.rds.connection_string
+    DATABASE_URL   = "postgresql://${var.rds_config.username}:password@${module.rds.endpoint}/${var.rds_config.database_name}"
     S3_BUCKET_NAME = module.s3.bucket_name
   })
   
-  subnet_ids           = module.vpc.private_subnet_ids
-  security_group_ids   = [module.vpc.lambda_security_group_id]
+  environment = var.environment
   
-  environment          = var.environment
-  tags                 = local.common_tags
-  
-  depends_on = [module.rds, module.s3]
+  depends_on = [module.rds, module.s3, aws_cloudwatch_log_group.lambda_logs]
 }
 
 # API Gateway
@@ -115,7 +150,6 @@ module "api_gateway" {
   lambda_function_arn  = module.lambda.function_arn
   
   environment = var.environment
-  tags        = local.common_tags
   
   depends_on = [module.lambda]
 }

@@ -1,31 +1,26 @@
-variable "environment" {
-  description = "Deployment environment"
-  type        = string
-}
-
 variable "function_name" {
   description = "Name of the Lambda function"
   type        = string
 }
 
 variable "image_uri" {
-  description = "URI of the container image"
+  description = "ECR image URI for the Lambda function"
   type        = string
 }
 
 variable "execution_role_arn" {
-  description = "ARN of the execution role for the Lambda function"
+  description = "ARN of the IAM role for Lambda execution"
   type        = string
 }
 
 variable "memory_size" {
-  description = "Memory size for the Lambda function (MB)"
+  description = "Amount of memory in MB assigned to the Lambda function"
   type        = number
   default     = 512
 }
 
 variable "timeout" {
-  description = "Timeout for the Lambda function (seconds)"
+  description = "Maximum execution time for the Lambda function in seconds"
   type        = number
   default     = 30
 }
@@ -36,6 +31,7 @@ variable "vpc_config" {
     subnet_ids         = list(string)
     security_group_ids = list(string)
   })
+  default = null
 }
 
 variable "environment_variables" {
@@ -44,8 +40,13 @@ variable "environment_variables" {
   default     = {}
 }
 
-variable "log_retention_days" {
-  description = "Number of days to retain CloudWatch logs"
-  type        = number
-  default     = 14
+variable "environment" {
+  description = "Deployment environment"
+  type        = string
+}
+
+variable "tags" {
+  description = "Additional tags for the Lambda function"
+  type        = map(string)
+  default     = {}
 }

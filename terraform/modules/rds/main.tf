@@ -1,100 +1,92 @@
-# Subnet group for RDS instance
 resource "aws_db_subnet_group" "main" {
-  name        = "${var.environment}-${var.identifier}-subnet-group"
-  description = "Database subnet group for ${var.identifier}"
-  subnet_ids  = var.subnet_ids
+  name       = "${var.identifier}-subnet-group"
+  subnet_ids = var.subnet_ids
 
   tags = {
-    Name        = "${var.environment}-${var.identifier}-subnet-group"
+    Name        = "${var.identifier}-subnet-group"
     Environment = var.environment
-    ManagedBy   = "Terraform"
   }
 }
 
-# Parameter group for PostgreSQL
-resource "aws_db_parameter_group" "main" {
-  name        = "${var.environment}-${var.identifier}-pg"
-  family      = "postgres${replace(var.engine_version, ".", "")}"
-  description = "Parameter group for ${var.identifier} PostgreSQL ${var.engine_version}"
+resource "aws_security_group" "db" {
+  name        = "${var.identifier}-sg"
+  description = "Security group for ${var.identifier} database"
+  vpc_id      = var.vpc_security_group_ids[0] != "" ? data.aws_security_group.existing[0].vpc_id : null
 
-  parameter {
-    name  = "log_connections"
-    value = "1"
+  ingress {
+    from_port       = 5432
+    to_port         = 5432
+    protocol        = "tcp"
+    security_groups = var.vpc_security_group_ids
   }
 
-  parameter {
-    name  = "log_disconnections"
-    value = "1"
-  }
-
-  parameter {
-    name  = "log_min_duration_statement"
-    value = "1000"  # Log queries taking longer than 1 second
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
   }
 
   tags = {
-    Name        = "${var.environment}-${var.identifier}-pg"
+    Name        = "${var.identifier}-sg"
     Environment = var.environment
-    ManagedBy   = "Terraform"
   }
 }
 
-# RDS instance
+data "aws_security_group" "existing" {
+  count = length(var.vpc_security_group_ids) > 0 ? 1 : 0
+  id    = var.vpc_security_group_ids[0]
+}
+
 resource "aws_db_instance" "main" {
-  identifier                  = var.identifier
-  engine                      = var.engine
-  engine_version              = var.engine_version
-  instance_class              = var.instance_class
-  allocated_storage           = var.allocated_storage
-  max_allocated_storage       = var.max_allocated_storage
-  storage_type                = "gp2"
-  storage_encrypted           = true
-  username                    = var.username
-  password                    = var.password
-  db_name                     = var.database_name
-  parameter_group_name        = aws_db_parameter_group.main.name
-  db_subnet_group_name        = aws_db_subnet_group.main.name
-  vpc_security_group_ids      = var.security_group_ids
-  multi_az                    = var.multi_az
-  backup_retention_period     = var.backup_retention_period
-  backup_window               = var.backup_window
-  maintenance_window          = var.maintenance_window
-  skip_final_snapshot         = var.skip_final_snapshot
-  final_snapshot_identifier   = var.skip_final_snapshot ? null : "${var.identifier}-final-snapshot"
-  deletion_protection         = var.deletion_protection
-  publicly_accessible         = false
-  copy_tags_to_snapshot       = true
-  auto_minor_version_upgrade  = true
-  performance_insights_enabled = var.performance_insights_enabled
-
+  identifier              = var.identifier
+  engine                  = var.engine
+  engine_version          = var.engine_version
+  instance_class          = var.instance_class
+  allocated_storage       = var.allocated_storage
+  max_allocated_storage   = var.max_allocated_storage
+  username                = var.username
+  password                = random_password.db_password.result
+  db_name                 = var.database_name
+  parameter_group_name    = "default.${var.engine}${var.engine_version}"
+  backup_retention_period = var.backup_retention_period
+  deletion_protection     = var.deletion_protection
+  multi_az                = var.multi_az
+  skip_final_snapshot     = var.skip_final_snapshot
+  maintenance_window      = var.maintenance_window
+  backup_window           = var.backup_window
+  db_subnet_group_name    = aws_db_subnet_group.main.name
+  vpc_security_group_ids  = [aws_security_group.db.id]
+  
   tags = {
     Name        = var.identifier
     Environment = var.environment
-    ManagedBy   = "Terraform"
   }
 }
 
-# Secrets Manager secret for database credentials
+resource "random_password" "db_password" {
+  length           = 16
+  special          = true
+  override_special = "!#$%&*()-_=+[]{}<>:?"
+}
+
 resource "aws_secretsmanager_secret" "db_credentials" {
-  name        = "dev-db-password"
+  name        = "${var.identifier}-credentials"
   description = "Database credentials for ${var.identifier}"
   
   tags = {
-    Name        = "${var.environment}-${var.identifier}-credentials"
     Environment = var.environment
-    ManagedBy   = "Terraform"
   }
 }
 
 resource "aws_secretsmanager_secret_version" "db_credentials" {
   secret_id = aws_secretsmanager_secret.db_credentials.id
   secret_string = jsonencode({
-    username          = var.username
-    password          = var.password
-    engine            = var.engine
-    host              = aws_db_instance.main.address
-    port              = aws_db_instance.main.port
-    dbname            = var.database_name
-    connection_string = "postgresql://${var.username}:${var.password}@${aws_db_instance.main.address}:${aws_db_instance.main.port}/${var.database_name}"
+    username = var.username
+    password = random_password.db_password.result
+    host     = aws_db_instance.main.address
+    port     = 5432
+    dbname   = var.database_name
+    engine   = var.engine
   })
 }
