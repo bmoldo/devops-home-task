@@ -1,5 +1,14 @@
 environment = "dev"
 aws_region  = "us-east-1"
+account_id  = "123456789012"  # Replace with your actual AWS account ID
+
+# ECR Configuration
+ecr_config = {
+  repository_name      = "user-api"  # Will become user-api-dev
+  image_tag_mutability = "MUTABLE"
+  scan_on_push         = true
+  keep_image_count     = 30  # Keep more images in dev for testing
+}
 
 vpc_config = {
   cidr_block      = "10.0.0.0/16"
@@ -38,8 +47,8 @@ rds_config = {
 lambda_config = {
   function_name         = "user-api"
   runtime               = "python3.11"
-  memory_size           = 512            # Minimum recommended for this app
-  timeout               = 30             # Appropriate timeout for DB operations
+  memory_size           = 512            
+  timeout               = 30             
   log_retention_in_days = 14
   handler               = "main.lambda_handler"
   environment_variables = {
@@ -52,7 +61,7 @@ lambda_config = {
 }
 
 s3_config = {
-  bucket_name        = "user-queries-dev-123456"  # Replace with a unique name
+  bucket_name        = "user-queries-dev"  
   versioning_enabled = true
   lifecycle_rules = [
     {
@@ -70,4 +79,3 @@ api_gateway_config = {
   stage_name    = "dev"
   description   = "API Gateway for User API - Dev Environment"
 }
-
