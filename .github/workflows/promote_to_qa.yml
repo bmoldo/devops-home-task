@@ -1,0 +1,169 @@
+name: QA Promotion Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      dev_image_tag:
+        description: 'Tag of the dev image to promote (commit SHA)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  terraform-qa:
+    name: Deploy QA Infrastructure
+    runs-on: ubuntu-latest
+    environment: qa
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.5.0
+
+      - name: Update backend configuration
+        run: |
+          cat << EOF > terraform/environments/qa/backend.tf
+          terraform {
+            backend "s3" {
+              bucket = "terraform-state-${{ github.repository_owner }}-${{ github.event.repository.name }}"
+              key    = "terraform/qa/terraform.tfstate"
+              region = "us-east-1"
+            }
+          }
+          EOF
+
+      - name: Terraform Init
+        working-directory: terraform/environments/qa
+        run: terraform init
+
+      - name: Terraform Format
+        working-directory: terraform/environments/qa
+        run: terraform fmt -check -recursive
+
+      - name: Terraform Validate
+        working-directory: terraform/environments/qa
+        run: terraform validate
+
+      - name: Terraform Plan
+        working-directory: terraform/environments/qa
+        id: plan
+        run: |
+          terraform plan -var-file=../../config/qa.tfvars -out=tfplan
+          terraform show -json tfplan > plan.json
+
+      - name: Store Plan Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: terraform-qa-plan
+          path: terraform/environments/qa/plan.json
+          retention-days: 5
+
+      - name: Terraform Apply
+        working-directory: terraform/environments/qa
+        run: terraform apply -auto-approve tfplan
+
+  promote-to-qa:
+    name: Promote Application to QA
+    needs: terraform-qa
+    runs-on: ubuntu-latest
+    environment: qa
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Get Repository URIs
+        id: get-repos
+        run: |
+          DEV_ECR_REPO_URI=$(aws ecr describe-repositories --repository-names ${{ github.event.repository.name }}-dev --query 'repositories[0].repositoryUri' --output text)
+          
+          QA_REPO=$(aws ecr describe-repositories --repository-names ${{ github.event.repository.name }}-qa || echo "not exists")
+          if [[ $QA_REPO == *"not exists"* ]]; then
+            echo "QA ECR repository does not exist. Creating it..."
+            aws ecr create-repository --repository-name ${{ github.event.repository.name }}-qa --image-scanning-configuration scanOnPush=true
+          fi
+          
+          QA_ECR_REPO_URI=$(aws ecr describe-repositories --repository-names ${{ github.event.repository.name }}-qa --query 'repositories[0].repositoryUri' --output text)
+          
+          echo "dev_repo_uri=$DEV_ECR_REPO_URI" >> $GITHUB_OUTPUT
+          echo "qa_repo_uri=$QA_ECR_REPO_URI" >> $GITHUB_OUTPUT
+
+      - name: Set image tags
+        id: set-tags
+        run: |
+          TIMESTAMP=$(date +%Y%m%d%H%M%S)
+          echo "timestamp_tag=${TIMESTAMP}" >> $GITHUB_OUTPUT
+          echo "git_sha_tag=${{ github.event.inputs.dev_image_tag }}" >> $GITHUB_OUTPUT
+
+      - name: Pull Dev Image and Push to QA
+        run: |
+          # Pull the image from dev ECR
+          docker pull ${{ steps.get-repos.outputs.dev_repo_uri }}:${{ github.event.inputs.dev_image_tag }}
+          
+          # Tag for QA
+          docker tag ${{ steps.get-repos.outputs.dev_repo_uri }}:${{ github.event.inputs.dev_image_tag }} ${{ steps.get-repos.outputs.qa_repo_uri }}:${{ steps.set-tags.outputs.git_sha_tag }}
+          docker tag ${{ steps.get-repos.outputs.dev_repo_uri }}:${{ github.event.inputs.dev_image_tag }} ${{ steps.get-repos.outputs.qa_repo_uri }}:${{ steps.set-tags.outputs.timestamp_tag }}
+          docker tag ${{ steps.get-repos.outputs.dev_repo_uri }}:${{ github.event.inputs.dev_image_tag }} ${{ steps.get-repos.outputs.qa_repo_uri }}:latest
+          
+          # Push to QA ECR
+          docker push ${{ steps.get-repos.outputs.qa_repo_uri }}:${{ steps.set-tags.outputs.git_sha_tag }}
+          docker push ${{ steps.get-repos.outputs.qa_repo_uri }}:${{ steps.set-tags.outputs.timestamp_tag }}
+          docker push ${{ steps.get-repos.outputs.qa_repo_uri }}:latest
+
+      - name: Create deployment record
+        run: |
+          echo "{\"image\":\"${{ steps.get-repos.outputs.qa_repo_uri }}:${{ steps.set-tags.outputs.git_sha_tag }}\",\"timestamp\":\"$(date -u +"%Y-%m-%dT%H:%M:%SZ")\",\"git_sha\":\"${{ github.event.inputs.dev_image_tag }}\",\"promoted_from\":\"dev\"}" > deployment.json
+          aws s3 cp deployment.json s3://${{ secrets.DEPLOYMENT_BUCKET }}/qa/deployments/${{ steps.set-tags.outputs.timestamp_tag }}.json
+
+      - name: Create Lambda deployment package
+        run: |
+          bash ./create_lambda_package.sh
+          zip -r lambda_function.zip ./lambda_package
+
+      - name: Update Lambda function
+        run: |
+          LAMBDA_FUNCTION_NAME="${{ github.event.repository.name }}-qa-lambda"
+          
+          # Update Lambda function code
+          aws lambda update-function-code \
+            --function-name $LAMBDA_FUNCTION_NAME \
+            --zip-file fileb://lambda_function.zip
+          
+          # Update Lambda function configuration
+          aws lambda update-function-configuration \
+            --function-name $LAMBDA_FUNCTION_NAME \
+            --environment "Variables={DATABASE_URL=${{ secrets.DATABASE_URL }},ENVIRONMENT=qa,AWS_DEFAULT_REGION=us-east-1,S3_BUCKET_NAME=${{ secrets.S3_BUCKET_NAME }}}"
+
+      - name: Deploy API Gateway
+        run: |
+          API_ID=$(aws apigateway get-rest-apis --query "items[?name=='${{ github.event.repository.name }}-qa-api'].id" --output text)
+          
+          # Create deployment
+          aws apigateway create-deployment \
+            --rest-api-id $API_ID \
+            --stage-name qa

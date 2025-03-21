@@ -1,0 +1,250 @@
+name: Production Deployment Pipeline
+
+on:
+  pull_request:
+    branches: [ main ]
+    types: [ closed ]
+  workflow_dispatch:
+    inputs:
+      qa_image_tag:
+        description: 'Tag of the QA image to promote (commit SHA)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  terraform-plan-prod:
+    name: Plan Production Infrastructure
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.merged == true || github.event_name == 'workflow_dispatch'
+    environment: prod
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.5.0
+
+      - name: Update backend configuration
+        run: |
+          cat << EOF > terraform/environments/prod/backend.tf
+          terraform {
+            backend "s3" {
+              bucket = "terraform-state-${{ github.repository_owner }}-${{ github.event.repository.name }}"
+              key    = "terraform/prod/terraform.tfstate"
+              region = "us-east-1"
+            }
+          }
+          EOF
+
+      - name: Terraform Init
+        working-directory: terraform/environments/prod
+        run: terraform init
+
+      - name: Terraform Format
+        working-directory: terraform/environments/prod
+        run: terraform fmt -check -recursive
+
+      - name: Terraform Validate
+        working-directory: terraform/environments/prod
+        run: terraform validate
+
+      - name: Terraform Plan
+        working-directory: terraform/environments/prod
+        id: plan
+        run: |
+          terraform plan -var-file=../../config/prod.tfvars -out=tfplan
+          terraform show -json tfplan > plan.json
+
+      - name: Store Plan Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: terraform-prod-plan
+          path: terraform/environments/prod/plan.json
+          retention-days: 5
+
+  approve-terraform-prod:
+    name: Approve Production Infrastructure Changes
+    needs: terraform-plan-prod
+    runs-on: ubuntu-latest
+    environment:
+      name: prod-approval
+    steps:
+      - name: Manual Approval
+        run: |
+          echo "Production infrastructure changes have been approved."
+
+  terraform-apply-prod:
+    name: Apply Production Infrastructure
+    needs: approve-terraform-prod
+    runs-on: ubuntu-latest
+    environment: prod
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.5.0
+
+      - name: Update backend configuration
+        run: |
+          cat << EOF > terraform/environments/prod/backend.tf
+          terraform {
+            backend "s3" {
+              bucket = "terraform-state-${{ github.repository_owner }}-${{ github.event.repository.name }}"
+              key    = "terraform/prod/terraform.tfstate"
+              region = "us-east-1"
+            }
+          }
+          EOF
+
+      - name: Download Terraform Plan
+        uses: actions/download-artifact@v3
+        with:
+          name: terraform-prod-plan
+          path: terraform/environments/prod
+
+      - name: Terraform Init
+        working-directory: terraform/environments/prod
+        run: terraform init
+
+      - name: Terraform Apply
+        working-directory: terraform/environments/prod
+        run: |
+          # Recreate the tfplan file from the stored plan.json
+          terraform show -json plan.json > plan.txt
+          terraform apply -auto-approve tfplan
+
+  promote-to-prod:
+    name: Promote Application to Production
+    needs: terraform-apply-prod
+    runs-on: ubuntu-latest
+    environment: prod
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Determine image tag to promote
+        id: get-tag
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "image_tag=${{ github.event.inputs.qa_image_tag }}" >> $GITHUB_OUTPUT
+          else
+            # For PR merge, get the latest QA image
+            echo "image_tag=latest" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Get Repository URIs
+        id: get-repos
+        run: |
+          QA_ECR_REPO_URI=$(aws ecr describe-repositories --repository-names ${{ github.event.repository.name }}-qa --query 'repositories[0].repositoryUri' --output text)
+          
+          PROD_REPO=$(aws ecr describe-repositories --repository-names ${{ github.event.repository.name }}-prod || echo "not exists")
+          if [[ $PROD_REPO == *"not exists"* ]]; then
+            echo "Production ECR repository does not exist. Creating it..."
+            aws ecr create-repository --repository-name ${{ github.event.repository.name }}-prod --image-scanning-configuration scanOnPush=true
+          fi
+          
+          PROD_ECR_REPO_URI=$(aws ecr describe-repositories --repository-names ${{ github.event.repository.name }}-prod --query 'repositories[0].repositoryUri' --output text)
+          
+          echo "qa_repo_uri=$QA_ECR_REPO_URI" >> $GITHUB_OUTPUT
+          echo "prod_repo_uri=$PROD_ECR_REPO_URI" >> $GITHUB_OUTPUT
+
+      - name: Set image tags
+        id: set-tags
+        run: |
+          TIMESTAMP=$(date +%Y%m%d%H%M%S)
+          echo "timestamp_tag=${TIMESTAMP}" >> $GITHUB_OUTPUT
+          
+          # If using latest tag from QA, get the image digest to use as a more specific tag
+          if [ "${{ steps.get-tag.outputs.image_tag }}" == "latest" ]; then
+            QA_IMAGE_DIGEST=$(aws ecr describe-images --repository-name ${{ github.event.repository.name }}-qa --image-ids imageTag=latest --query 'imageDetails[0].imageDigest' --output text)
+            QA_IMAGE_MANIFEST=$(aws ecr batch-get-image --repository-name ${{ github.event.repository.name }}-qa --image-ids imageDigest=$QA_IMAGE_DIGEST --query 'images[0].imageManifest' --output text)
+            QA_IMAGE_SHA=$(echo $QA_IMAGE_MANIFEST | jq -r '.config.digest' | cut -d':' -f2 | cut -c1-12)
+            echo "git_sha_tag=$QA_IMAGE_SHA" >> $GITHUB_OUTPUT
+          else
+            echo "git_sha_tag=${{ steps.get-tag.outputs.image_tag }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Pull QA Image and Push to Production
+        run: |
+          # Pull the image from QA ECR
+          docker pull ${{ steps.get-repos.outputs.qa_repo_uri }}:${{ steps.get-tag.outputs.image_tag }}
+          
+          # Tag for Production
+          docker tag ${{ steps.get-repos.outputs.qa_repo_uri }}:${{ steps.get-tag.outputs.image_tag }} ${{ steps.get-repos.outputs.prod_repo_uri }}:${{ steps.set-tags.outputs.git_sha_tag }}
+          docker tag ${{ steps.get-repos.outputs.qa_repo_uri }}:${{ steps.get-tag.outputs.image_tag }} ${{ steps.get-repos.outputs.prod_repo_uri }}:${{ steps.set-tags.outputs.timestamp_tag }}
+          docker tag ${{ steps.get-repos.outputs.qa_repo_uri }}:${{ steps.get-tag.outputs.image_tag }} ${{ steps.get-repos.outputs.prod_repo_uri }}:latest
+          
+          # Push to Production ECR
+          docker push ${{ steps.get-repos.outputs.prod_repo_uri }}:${{ steps.set-tags.outputs.git_sha_tag }}
+          docker push ${{ steps.get-repos.outputs.prod_repo_uri }}:${{ steps.set-tags.outputs.timestamp_tag }}
+          docker push ${{ steps.get-repos.outputs.prod_repo_uri }}:latest
+
+      - name: Create deployment record
+        run: |
+          echo "{\"image\":\"${{ steps.get-repos.outputs.prod_repo_uri }}:${{ steps.set-tags.outputs.git_sha_tag }}\",\"timestamp\":\"$(date -u +"%Y-%m-%dT%H:%M:%SZ")\",\"promoted_from\":\"qa\"}" > deployment.json
+          aws s3 cp deployment.json s3://${{ secrets.DEPLOYMENT_BUCKET }}/prod/deployments/${{ steps.set-tags.outputs.timestamp_tag }}.json
+
+      - name: Create Lambda deployment package
+        run: |
+          bash ./create_lambda_package.sh
+          zip -r lambda_function.zip ./lambda_package
+
+      - name: Update Lambda function
+        run: |
+          LAMBDA_FUNCTION_NAME="${{ github.event.repository.name }}-prod-lambda"
+          
+          # Update Lambda function code
+          aws lambda update-function-code \
+            --function-name $LAMBDA_FUNCTION_NAME \
+            --zip-file fileb://lambda_function.zip
+          
+          # Update Lambda function configuration
+          aws lambda update-function-configuration \
+            --function-name $LAMBDA_FUNCTION_NAME \
+            --environment "Variables={DATABASE_URL=${{ secrets.DATABASE_URL }},ENVIRONMENT=prod,AWS_DEFAULT_REGION=us-east-1,S3_BUCKET_NAME=${{ secrets.S3_BUCKET_NAME }}}"
+
+      - name: Deploy API Gateway
+        run: |
+          API_ID=$(aws apigateway get-rest-apis --query "items[?name=='${{ github.event.repository.name }}-prod-api'].id" --output text)
+          
+          # Create deployment
+          aws apigateway create-deployment \
+            --rest-api-id $API_ID \
+            --stage-name prod
