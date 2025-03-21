@@ -74,7 +74,7 @@ variable "s3_config" {
   type = object({
     bucket_name        = string
     versioning_enabled = bool
-    lifecycle_rules    = list(object({
+    lifecycle_rules = list(object({
       id              = string
       enabled         = bool
       prefix          = string

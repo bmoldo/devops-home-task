@@ -14,7 +14,7 @@ locals {
 # ECR Repository for Docker images
 module "ecr" {
   source = "../../modules/ecr"
-  
+
   repository_name      = var.ecr_config.repository_name
   environment          = var.environment
   account_id           = var.account_id
@@ -26,7 +26,7 @@ module "ecr" {
 # VPC for the application
 module "vpc" {
   source = "../../modules/vpc"
-  
+
   vpc_config = {
     cidr_block         = var.vpc_config.cidr_block
     azs                = var.vpc_config.azs
@@ -35,14 +35,14 @@ module "vpc" {
     enable_nat_gateway = var.vpc_config.enable_nat_gateway
     single_nat_gateway = var.vpc_config.single_nat_gateway
   }
-  
+
   environment = var.environment
 }
 
 # RDS Database
 module "rds" {
   source = "../../modules/rds"
-  
+
   identifier              = "${var.rds_config.identifier}-${local.env_suffix}"
   engine                  = var.rds_config.engine
   engine_version          = var.rds_config.engine_version
@@ -57,22 +57,22 @@ module "rds" {
   skip_final_snapshot     = var.rds_config.skip_final_snapshot
   maintenance_window      = var.rds_config.maintenance_window
   backup_window           = var.rds_config.backup_window
-  
-  subnet_ids              = module.vpc.private_subnet_ids
-  vpc_security_group_ids  = [module.vpc.default_security_group_id]
-  
-  environment             = var.environment
+
+  subnet_ids             = module.vpc.private_subnet_ids
+  vpc_security_group_ids = [module.vpc.default_security_group_id]
+
+  environment = var.environment
 }
 
 # S3 Bucket for application data
 module "s3" {
   source = "../../modules/s3"
-  
+
   bucket_name        = var.s3_config.bucket_name
   versioning_enabled = var.s3_config.versioning_enabled
   lifecycle_rules    = var.s3_config.lifecycle_rules
-  
-  environment        = var.environment
+
+  environment = var.environment
 }
 
 # Create IAM role for Lambda
@@ -114,42 +114,42 @@ resource "aws_cloudwatch_log_group" "lambda_logs" {
 # Lambda function for API
 module "lambda" {
   source = "../../modules/lambda"
-  
-  function_name       = "${var.lambda_config.function_name}-${local.env_suffix}"
-  image_uri           = "${module.ecr.repository_url}:latest"  # Using the latest image from ECR
-  execution_role_arn  = aws_iam_role.lambda_execution_role.arn
-  
-  memory_size         = var.lambda_config.memory_size
-  timeout             = var.lambda_config.timeout
-  
+
+  function_name      = "${var.lambda_config.function_name}-${local.env_suffix}"
+  image_uri          = "${module.ecr.repository_url}:latest" # Using the latest image from ECR
+  execution_role_arn = aws_iam_role.lambda_execution_role.arn
+
+  memory_size = var.lambda_config.memory_size
+  timeout     = var.lambda_config.timeout
+
   vpc_config = {
     subnet_ids         = module.vpc.private_subnet_ids
     security_group_ids = [module.vpc.lambda_security_group_id]
   }
-  
+
   environment_variables = merge(var.lambda_config.environment_variables, {
     DATABASE_URL   = "postgresql://${var.rds_config.username}:password@${module.rds.endpoint}/${var.rds_config.database_name}"
     S3_BUCKET_NAME = module.s3.bucket_name
   })
-  
+
   environment = var.environment
-  
+
   depends_on = [module.rds, module.s3, aws_cloudwatch_log_group.lambda_logs]
 }
 
 # API Gateway
 module "api_gateway" {
   source = "../../modules/api_gateway"
-  
+
   name          = "${var.api_gateway_config.name}-${local.env_suffix}"
   endpoint_type = var.api_gateway_config.endpoint_type
   stage_name    = var.api_gateway_config.stage_name
   description   = var.api_gateway_config.description
-  
+
   lambda_function_name = module.lambda.function_name
   lambda_function_arn  = module.lambda.function_arn
-  
+
   environment = var.environment
-  
+
   depends_on = [module.lambda]
 }
