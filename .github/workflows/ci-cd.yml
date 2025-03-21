@@ -21,7 +21,6 @@ jobs:
     name: Terraform Dev Infrastructure
     runs-on: ubuntu-latest
     environment: dev
-    
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -29,8 +28,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v2
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: arn:aws:iam::070503547773:role/GitHubActionsRole
           aws-region: us-east-1
 
       - name: Setup Terraform
@@ -54,21 +52,13 @@ jobs:
       - name: Create S3 state bucket if not exists
         if: steps.check_s3_bucket.outputs.create_bucket == 'true'
         run: |
-          aws s3api create-bucket \
-            --bucket ${{ steps.check_s3_bucket.outputs.bucket_name }} \
-            --region us-east-1
-          
-          aws s3api put-bucket-versioning \
-            --bucket ${{ steps.check_s3_bucket.outputs.bucket_name }} \
-            --versioning-configuration Status=Enabled
-          
-          aws s3api put-bucket-encryption \
-            --bucket ${{ steps.check_s3_bucket.outputs.bucket_name }} \
-            --server-side-encryption-configuration '{"Rules": [{"ApplyServerSideEncryptionByDefault": {"SSEAlgorithm": "AES256"}}]}'
+          aws s3api create-bucket --bucket ${{ steps.check_s3_bucket.outputs.bucket_name }} --region us-east-1
+          aws s3api put-bucket-versioning --bucket ${{ steps.check_s3_bucket.outputs.bucket_name }} --versioning-configuration Status=Enabled
+          aws s3api put-bucket-encryption --bucket ${{ steps.check_s3_bucket.outputs.bucket_name }} --server-side-encryption-configuration '{"Rules": [{"ApplyServerSideEncryptionByDefault": {"SSEAlgorithm": "AES256"}}]}'
 
       - name: Update backend configuration
         run: |
-          cat << EOF > terraform/environments/dev/backend.tf
+          cat <<EOF > terraform/environments/dev/backend.tf
           terraform {
             backend "s3" {
               bucket = "${{ steps.check_s3_bucket.outputs.bucket_name }}"
@@ -111,7 +101,6 @@ jobs:
   test-app:
     name: Test Application
     runs-on: ubuntu-latest
-    
     services:
       postgres:
         image: postgres:13
@@ -126,7 +115,6 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
-      
       localstack:
         image: localstack/localstack:latest
         env:
@@ -134,7 +122,6 @@ jobs:
           DEFAULT_REGION: us-east-1
         ports:
           - 4566:4566
-    
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -166,15 +153,13 @@ jobs:
           PYTEST_CURRENT_TEST: True
           AWS_SECURITY_TOKEN: testing
           AWS_SESSION_TOKEN: testing
-        run: |
-          pytest --cov=app tests/ -v
+        run: pytest --cov=app tests/ -v
 
   build-and-deploy-dev:
     name: Build and Deploy to Dev
     needs: [terraform-dev, test-app]
     runs-on: ubuntu-latest
     environment: dev
-    
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -182,8 +167,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v2
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: arn:aws:iam::070503547773:role/GitHubActionsRole
           aws-region: us-east-1
 
       - name: Set up Docker Buildx
@@ -192,20 +176,16 @@ jobs:
       - name: Get ECR Repository Info
         id: get-ecr
         run: |
-          # Using our terraform naming scheme: user-api-dev
           ECR_REPO_NAME="user-api-dev"
           ECR_REPO=$(aws ecr describe-repositories --repository-names $ECR_REPO_NAME || echo "not exists")
-          
           if [[ $ECR_REPO == *"not exists"* ]]; then
             echo "ECR repository does not exist. Check Terraform deployment."
             exit 1
           fi
-          
           ECR_REPO_URI=$(aws ecr describe-repositories --repository-names $ECR_REPO_NAME --query 'repositories[0].repositoryUri' --output text)
           echo "ecr_repo_uri=$ECR_REPO_URI" >> $GITHUB_OUTPUT
 
       - name: Login to Amazon ECR
-        id: login-ecr
         uses: aws-actions/amazon-ecr-login@v1
 
       - name: Set image tags
@@ -234,35 +214,20 @@ jobs:
 
       - name: Update Lambda function with ECR image
         run: |
-          # Using our terraform naming scheme: user-api-dev
           LAMBDA_FUNCTION_NAME="user-api-dev"
-          
-          # Check if function exists
           LAMBDA_EXISTS=$(aws lambda get-function --function-name $LAMBDA_FUNCTION_NAME 2>&1 || echo "not exists")
-          
           if [[ $LAMBDA_EXISTS == *"not exists"* ]]; then
             echo "Lambda function doesn't exist. Please check Terraform output."
             exit 1
           fi
-          
-          # Update Lambda function code with the new container image
-          aws lambda update-function-code \
-            --function-name $LAMBDA_FUNCTION_NAME \
-            --image-uri ${{ steps.get-ecr.outputs.ecr_repo_uri }}:${{ steps.set-tags.outputs.git_sha_tag }}
+          aws lambda update-function-code --function-name $LAMBDA_FUNCTION_NAME --image-uri ${{ steps.get-ecr.outputs.ecr_repo_uri }}:${{ steps.set-tags.outputs.git_sha_tag }}
 
       - name: Update API Gateway
         run: |
-          # Using our terraform naming scheme: user-api-dev
           API_NAME="user-api-dev"
           API_ID=$(aws apigateway get-rest-apis --query "items[?name=='$API_NAME'].id" --output text)
-          
           if [ -z "$API_ID" ]; then
             echo "API Gateway doesn't exist. Please check Terraform output."
             exit 1
           fi
-          
-          # Create deployment
-          aws apigateway create-deployment \
-            --rest-api-id $API_ID \
-            --stage-name dev \
-            --description "Deployment from GitHub Actions - ${{ steps.set-tags.outputs.git_sha_tag }}"
+          aws apigateway create-deployment --rest-api-id $API_ID --stage-name dev --description "Deployment from GitHub Actions - ${{ steps.set-tags.outputs.git_sha_tag }}"
