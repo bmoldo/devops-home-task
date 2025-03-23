@@ -1,7 +1,8 @@
 resource "aws_lambda_function" "function" {
   function_name = var.function_name
   role          = var.execution_role_arn
-  image_uri     = var.image_uri
+  image_uri     = data.aws_ecr_image.service_image.image_uri
+
   package_type  = "Image"
   
   memory_size   = var.memory_size
@@ -27,4 +28,9 @@ resource "aws_lambda_function" "function" {
     Name        = var.function_name
     Environment = var.environment
   }, var.tags)
+}
+
+data "aws_ecr_image" "service_image" {
+  repository_name = "user-api-dev"
+  image_tag       = "latest"
 }

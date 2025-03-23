@@ -6,6 +6,7 @@ variable "function_name" {
 variable "image_uri" {
   description = "ECR image URI for the Lambda function"
   type        = string
+  
 }
 
 variable "execution_role_arn" {
