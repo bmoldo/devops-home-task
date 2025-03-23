@@ -336,10 +336,10 @@ jobs:
         working-directory: terraform/environments/dev
         run: |
           terraform apply -auto-approve \
+            -var-file=../../config/dev.tfvars \
             -var="use_s3_source=true" \
             -var="s3_bucket=terraform-state-bmoldo-devops-home-task" \
-            -var="s3_key=lambda/lambda_deployment_package_20250323230509.zip" \
-            -var="account_id=070503547773"
+            -var="s3_key=lambda/lambda_deployment_package_${TIMESTAMP}.zip"
 
   test-app:
     name: Test Application
