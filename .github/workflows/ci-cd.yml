@@ -337,8 +337,9 @@ jobs:
         run: |
           terraform apply -auto-approve \
             -var="use_s3_source=true" \
-            -var="s3_bucket=terraform-state-${{ github.repository_owner }}-${{ github.event.repository.name }}" \
-            -var="s3_key=${{ needs.build-lambda-package.outputs.s3_lambda_key }}"
+            -var="s3_bucket=terraform-state-bmoldo-devops-home-task" \
+            -var="s3_key=lambda/lambda_deployment_package_20250323230509.zip" \
+            -var="account_id=070503547773"
 
   test-app:
     name: Test Application
