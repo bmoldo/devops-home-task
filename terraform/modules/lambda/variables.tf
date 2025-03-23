@@ -56,5 +56,5 @@ variable "tags" {
 variable "image_repository" {
   description = "The ECR repository name/path for the Lambda function"
   type        = string
-  default     = ""
+  default     = "070503547773.dkr.ecr.us-east-1.amazonaws.com/user-api-dev"
 }
