@@ -1,18 +1,16 @@
-FROM python:3.11-slim
+FROM public.ecr.aws/lambda/python:3.11
 
-WORKDIR /app
+# Copy requirements file
+COPY requirements.txt ${LAMBDA_TASK_ROOT}
 
-# Install build dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    python3-dev \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY requirements.txt .
+# Install dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY app/ app/
+# Copy function code
+COPY app/ ${LAMBDA_TASK_ROOT}/app/
 
-EXPOSE 8000
+# Create lambda handler file
+COPY lambda_handler.py ${LAMBDA_TASK_ROOT}
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"] 
+# Set the CMD to your handler
+CMD [ "lambda_handler.handler" ]
