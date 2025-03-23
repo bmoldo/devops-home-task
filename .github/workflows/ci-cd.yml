@@ -29,6 +29,11 @@ on:
         required: true
         default: true
         type: boolean
+      destroy_infrastructure:
+        description: 'Destroy Infrastructure'
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -65,7 +70,7 @@ jobs:
   terraform-dev:
     name: Terraform Dev Infrastructure
     needs: changes
-    if: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.run_infrastructure == 'true') || (github.event_name != 'workflow_dispatch' && needs.changes.outputs.terraform == 'true') }}
+    if: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.run_infrastructure == 'true' && github.event.inputs.destroy_infrastructure == 'false') || (github.event_name != 'workflow_dispatch' && needs.changes.outputs.terraform == 'true') }}
     runs-on: ubuntu-latest
     environment: dev
     outputs:
@@ -137,7 +142,7 @@ jobs:
           # Create a placeholder zip if it doesn't exist for initial deployment
           if [ ! -f "../../../lambda_deployment_package.zip" ]; then
             echo "Creating placeholder Lambda ZIP for initial deployment"
-            echo "placeholder" > placeholder.txt
+            touch placeholder.txt
             zip ../../../lambda_deployment_package.zip placeholder.txt
           fi
           
@@ -168,7 +173,7 @@ jobs:
   build-lambda-package:
     name: Build Lambda Package
     needs: [changes]
-    if: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.build_and_deploy == 'true') || (github.event_name != 'workflow_dispatch' && needs.changes.outputs.app == 'true') }}
+    if: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.build_and_deploy == 'true' && github.event.inputs.destroy_infrastructure == 'false') || (github.event_name != 'workflow_dispatch' && needs.changes.outputs.app == 'true') }}
     runs-on: ubuntu-latest
     outputs:
       lambda_package_path: ${{ steps.create-lambda-package.outputs.lambda_package_path }}
@@ -201,7 +206,7 @@ jobs:
   terraform-with-lambda:
     name: Apply Terraform with Lambda Package
     needs: [terraform-dev, build-lambda-package]
-    if: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.build_and_deploy == 'true') || (github.event_name != 'workflow_dispatch' && needs.changes.outputs.app == 'true') }}
+    if: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.build_and_deploy == 'true' && github.event.inputs.destroy_infrastructure == 'false') || (github.event_name != 'workflow_dispatch' && needs.changes.outputs.app == 'true') }}
     runs-on: ubuntu-latest
     environment: dev
     steps:
@@ -243,7 +248,7 @@ jobs:
   test-app:
     name: Test Application
     needs: [terraform-with-lambda]
-    if: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.run_tests == 'true') || (github.event_name != 'workflow_dispatch' && needs.changes.outputs.app == 'true') }}
+    if: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.run_tests == 'true' && github.event.inputs.destroy_infrastructure == 'false') || (github.event_name != 'workflow_dispatch' && needs.changes.outputs.app == 'true') }}
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -321,3 +326,80 @@ jobs:
           name: test-coverage-report
           path: .coverage
           retention-days: 5
+
+  terraform-destroy:
+    name: Terraform Destroy Dev Infrastructure
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.destroy_infrastructure == 'true'
+    runs-on: ubuntu-latest
+    environment: dev
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials with Role
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: arn:aws:iam::070503547773:role/GitHubActionsRole
+          aws-region: us-east-1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.5.0
+
+      - name: Create S3 backend configuration
+        run: |
+          BUCKET_NAME="terraform-state-${{ github.repository_owner }}-${{ github.event.repository.name }}"
+          cat <<EOF > terraform/environments/dev/backend.tf
+          terraform {
+            backend "s3" {
+              bucket = "$BUCKET_NAME"
+              key    = "terraform/dev/terraform.tfstate"
+              region = "us-east-1"
+            }
+          }
+          EOF
+
+      - name: Terraform Init
+        working-directory: terraform/environments/dev
+        run: terraform init
+
+      - name: Create placeholder zip for destroy
+        run: |
+          echo "Creating placeholder Lambda ZIP for destroy operation"
+          touch placeholder.txt
+          zip lambda_deployment_package.zip placeholder.txt
+
+      - name: Terraform Destroy Plan
+        working-directory: terraform/environments/dev
+        id: destroy-plan
+        run: |
+          terraform plan -destroy -var-file=../../config/dev.tfvars -var="lambda_zip_path=../../../lambda_deployment_package.zip" -out=destroy.tfplan
+          terraform show -json destroy.tfplan > destroy.json
+
+      - name: Request approval for destroy
+        uses: trstringer/manual-approval@v1
+        with:
+          secret: ${{ github.TOKEN }}
+          approvers: ${{ github.actor }}
+          minimum-approvals: 1
+          issue-title: "Approval needed for Terraform destroy in dev environment"
+          issue-body: "Please approve the infrastructure destruction in the dev environment by adding a comment with 'approve' in this issue."
+          exclude-workflow-initiator-as-approver: false
+          timeout-minutes: 10
+
+      - name: Store Destroy Plan Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-dev-destroy-plan
+          path: terraform/environments/dev/destroy.json
+          retention-days: 5
+
+      - name: Terraform Destroy
+        working-directory: terraform/environments/dev
+        run: terraform apply -auto-approve destroy.tfplan
+
+      - name: Notify Destroy Completion
+        run: |
+          echo "Terraform destroy completed successfully!"
+          echo "All resources in the dev environment have been destroyed."
