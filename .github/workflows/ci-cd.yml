@@ -286,61 +286,73 @@ jobs:
           echo "db_host=${DB_HOST}" >> $GITHUB_OUTPUT
           echo "db_name=${DB_NAME}" >> $GITHUB_OUTPUT
 
-  terraform-with-lambda:
-    name: Apply Terraform with Lambda Package
-    needs: [terraform-dev, build-lambda-package]
-    if: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.build_and_deploy == 'true' && github.event.inputs.destroy_infrastructure == 'false') || (github.event_name != 'workflow_dispatch' && needs.changes.outputs.app == 'true') }}
-    runs-on: ubuntu-latest
-    environment: dev
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-      
-      - name: Configure AWS credentials with Role
-        uses: aws-actions/configure-aws-credentials@v2
-        with:
-          role-to-assume: arn:aws:iam::070503547773:role/GitHubActionsRole
-          aws-region: us-east-1
+  # Updated terraform-with-lambda job
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v2
-        with:
-          terraform_version: 1.5.0
+terraform-with-lambda:
+  name: Apply Terraform with Lambda Package
+  needs: [terraform-dev, build-lambda-package]
+  if: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.build_and_deploy == 'true' && github.event.inputs.destroy_infrastructure == 'false') || (github.event_name != 'workflow_dispatch' && needs.changes.outputs.app == 'true') }}
+  runs-on: ubuntu-latest
+  environment: dev
+  steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Configure AWS credentials with Role
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        role-to-assume: arn:aws:iam::070503547773:role/GitHubActionsRole
+        aws-region: us-east-1
 
-      - name: Create Lambda S3 variables file
-        run: |
-          S3_BUCKET="terraform-state-${{ github.repository_owner }}-${{ github.event.repository.name }}"
-          S3_KEY="${{ needs.build-lambda-package.outputs.s3_lambda_key }}"
-          
-          echo "Creating Lambda S3 variables file with:"
-          echo "Bucket: $S3_BUCKET"
-          echo "Key: $S3_KEY"
-          
-          mkdir -p terraform/environments/dev
-          cat > terraform/environments/dev/lambda_vars.auto.tfvars <<EOF
-          use_s3_source = true
-          s3_bucket = "$S3_BUCKET"
-          s3_key = "$S3_KEY"
-          EOF
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v2
+      with:
+        terraform_version: 1.5.0
 
-      - name: Terraform Init
-        working-directory: terraform/environments/dev
-        run: terraform init
+    - name: Create Lambda S3 variables file
+      run: |
+        S3_BUCKET="terraform-state-${{ github.repository_owner }}-${{ github.event.repository.name }}"
+        S3_KEY="${{ needs.build-lambda-package.outputs.s3_lambda_key }}"
+        
+        echo "Creating Lambda S3 variables file with:"
+        echo "Bucket: $S3_BUCKET"
+        echo "Key: $S3_KEY"
+        
+        mkdir -p terraform/environments/dev
+        cat > terraform/environments/dev/lambda_vars.auto.tfvars <<EOF
+        use_s3_source = true
+        s3_bucket = "$S3_BUCKET"
+        s3_key = "$S3_KEY"
+        EOF
 
-      - name: Verify Lambda S3 variables file
-        run: |
-          echo "Contents of lambda_vars.auto.tfvars:"
-          cat terraform/environments/dev/lambda_vars.auto.tfvars
+    - name: Create placeholder zip file
+      run: |
+        echo "Creating placeholder zip for Terraform"
+        mkdir -p placeholder
+        echo "placeholder" > placeholder/placeholder.txt
+        cd placeholder
+        zip -r ../lambda_deployment_package.zip .
+        cd ..
+        ls -la lambda_deployment_package.zip
 
-      - name: Terraform Apply with Lambda package
-        working-directory: terraform/environments/dev
-        run: |
-          TIMESTAMP=$(date +%Y%m%d%H%M%S)
-          terraform apply -auto-approve \
-            -var-file=../../config/dev.tfvars \
-            -var="use_s3_source=true" \
-            -var="s3_bucket=terraform-state-bmoldo-devops-home-task" \
-            -var="s3_key=lambda/lambda_deployment_package_${TIMESTAMP}.zip"
+    - name: Terraform Init
+      working-directory: terraform/environments/dev
+      run: terraform init
+
+    - name: Verify Lambda S3 variables file
+      run: |
+        echo "Contents of lambda_vars.auto.tfvars:"
+        cat terraform/environments/dev/lambda_vars.auto.tfvars
+
+    - name: Terraform Apply with Lambda package
+      working-directory: terraform/environments/dev
+      run: |
+        terraform apply -auto-approve \
+          -var-file=../../config/dev.tfvars \
+          -var="use_s3_source=true" \
+          -var="s3_bucket=terraform-state-${{ github.repository_owner }}-${{ github.event.repository.name }}" \
+          -var="s3_key=${{ needs.build-lambda-package.outputs.s3_lambda_key }}" \
+          -var="lambda_zip_path=../../../lambda_deployment_package.zip"
   test-app:
     name: Test Application
     needs: [terraform-with-lambda]

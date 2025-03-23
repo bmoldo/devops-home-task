@@ -2,14 +2,16 @@ resource "aws_lambda_function" "function" {
   function_name = var.function_name
   role          = var.execution_role_arn
   
-  # Conditionally use S3 or local file for Lambda code
-  # If using S3, these values will be used
+  # When use_s3_source is true, use S3 for the source
   s3_bucket     = var.use_s3_source ? var.s3_bucket : null
   s3_key        = var.use_s3_source ? var.s3_key : null
   
-  # If using local file, these values will be used - only if the file exists
-  filename         = var.use_s3_source ? null : (fileexists(var.lambda_zip_path) ? var.lambda_zip_path : null)
-  source_code_hash = var.use_s3_source ? null : (fileexists(var.lambda_zip_path) ? filebase64sha256(var.lambda_zip_path) : null)
+  # When use_s3_source is false, use the local file
+  # IMPORTANT: We must always provide a valid filename or s3_bucket, but not both
+  filename      = var.use_s3_source ? null : var.lambda_zip_path
+  
+  # Only calculate source_code_hash for local files
+  source_code_hash = var.use_s3_source ? null : filebase64sha256(var.lambda_zip_path)
   
   handler          = var.handler
   runtime          = var.runtime
@@ -33,4 +35,10 @@ resource "aws_lambda_function" "function" {
     Name        = var.function_name
     Environment = var.environment
   }, var.tags)
+  
+  # Prevent deployment from being updated if filename is changed
+  # when we're using S3 source
+  lifecycle {
+    ignore_changes = var.use_s3_source ? [filename, source_code_hash] : []
+  }
 }
