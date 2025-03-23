@@ -137,7 +137,7 @@ jobs:
           # Create a placeholder zip if it doesn't exist for initial deployment
           if [ ! -f "../../../lambda_deployment_package.zip" ]; then
             echo "Creating placeholder Lambda ZIP for initial deployment"
-            touch placeholder.txt
+            echo "placeholder" > placeholder.txt
             zip ../../../lambda_deployment_package.zip placeholder.txt
           fi
           
