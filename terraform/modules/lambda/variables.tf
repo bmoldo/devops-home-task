@@ -1,29 +1,23 @@
 variable "function_name" {
-  description = "Name of the Lambda function"
+  description = "The name of the Lambda function"
   type        = string
-}
-
-variable "image_uri" {
-  description = "ECR image URI for the Lambda function"
-  type        = string
-  default     = ""  # Make this optional with a default empty string
 }
 
 variable "execution_role_arn" {
-  description = "ARN of the IAM role for Lambda execution"
+  description = "The ARN of the Lambda execution role"
   type        = string
 }
 
 variable "memory_size" {
-  description = "Amount of memory in MB assigned to the Lambda function"
+  description = "The amount of memory to allocate to the Lambda function"
   type        = number
-  default     = 512
+  default     = 128
 }
 
 variable "timeout" {
-  description = "Maximum execution time for the Lambda function in seconds"
+  description = "The timeout period for the Lambda function in seconds"
   type        = number
-  default     = 30
+  default     = 3
 }
 
 variable "vpc_config" {
@@ -41,20 +35,32 @@ variable "environment_variables" {
   default     = {}
 }
 
-variable "environment" {
-  description = "Deployment environment"
-  type        = string
-  default     = ""
-}
-
 variable "tags" {
-  description = "Additional tags for the Lambda function"
+  description = "Tags to apply to the Lambda function"
   type        = map(string)
   default     = {}
 }
 
-variable "image_repository" {
-  description = "The ECR repository name/path for the Lambda function"
+variable "environment" {
+  description = "Environment (dev, qa, prod)"
   type        = string
-  default     = "070503547773.dkr.ecr.us-east-1.amazonaws.com/user-api-dev"
+  default     = "dev"
+}
+
+variable "handler" {
+  description = "Lambda function handler"
+  type        = string
+  default     = "lambda_handler.handler"
+}
+
+variable "runtime" {
+  description = "Lambda runtime"
+  type        = string
+  default     = "python3.11"
+}
+
+variable "lambda_zip_path" {
+  description = "Path to the Lambda deployment package ZIP file"
+  type        = string
+  default     = "lambda_deployment_package.zip"
 }

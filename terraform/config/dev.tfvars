@@ -28,14 +28,14 @@ vpc_config = {
 }
 
 rds_config = {
-  identifier            = "user-api-db"
+  identifier            = "users_test"
   engine                = "postgres"
   engine_version        = "14"
   instance_class        = "db.t3.micro"  # Minimum viable for dev
   allocated_storage     = 20             # Minimum recommended storage
   max_allocated_storage = 100            # Allow autoscaling
   username              = "postgres"
-  database_name         = "users"
+  database_name         = "users_test"
   backup_retention_period = 7
   deletion_protection   = false
   multi_az              = false          # Set to true for production

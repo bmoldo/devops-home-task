@@ -1,31 +1,22 @@
 variable "environment" {
-  description = "Environment name (dev, qa, prod)"
+  description = "The deployment environment"
   type        = string
+  default     = "dev"
 }
 
 variable "aws_region" {
-  description = "AWS Region to deploy resources"
+  description = "The AWS region to deploy resources to"
   type        = string
   default     = "us-east-1"
 }
 
 variable "account_id" {
-  description = "AWS Account ID"
+  description = "The AWS account ID"
   type        = string
 }
 
-variable "ecr_config" {
-  description = "Configuration for ECR repository"
-  type = object({
-    repository_name      = string
-    image_tag_mutability = string
-    scan_on_push         = bool
-    keep_image_count     = number
-  })
-}
-
 variable "vpc_config" {
-  description = "Configuration for VPC"
+  description = "Configuration for the VPC"
   type = object({
     cidr_block         = string
     azs                = list(string)
@@ -37,7 +28,7 @@ variable "vpc_config" {
 }
 
 variable "rds_config" {
-  description = "Configuration for RDS instance"
+  description = "Configuration for the RDS database"
   type = object({
     identifier              = string
     engine                  = string
@@ -57,7 +48,7 @@ variable "rds_config" {
 }
 
 variable "lambda_config" {
-  description = "Configuration for Lambda function"
+  description = "Configuration for the Lambda function"
   type = object({
     function_name         = string
     runtime               = string
@@ -70,11 +61,11 @@ variable "lambda_config" {
 }
 
 variable "s3_config" {
-  description = "Configuration for S3 bucket"
+  description = "Configuration for the S3 bucket"
   type = object({
     bucket_name        = string
     versioning_enabled = bool
-    lifecycle_rules = list(object({
+    lifecycle_rules    = list(object({
       id              = string
       enabled         = bool
       prefix          = string
@@ -84,11 +75,17 @@ variable "s3_config" {
 }
 
 variable "api_gateway_config" {
-  description = "Configuration for API Gateway"
+  description = "Configuration for the API Gateway"
   type = object({
     name          = string
     endpoint_type = string
     stage_name    = string
     description   = string
   })
+}
+
+variable "lambda_zip_path" {
+  description = "Path to the Lambda deployment package ZIP file"
+  type        = string
+  default     = "lambda_deployment_package.zip"
 }

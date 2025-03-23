@@ -1,45 +1,35 @@
-output "instance_id" {
-  description = "The RDS instance ID"
-  value       = aws_db_instance.main.id
+output "endpoint" {
+  description = "The endpoint of the RDS instance"
+  value       = aws_db_instance.main.endpoint
 }
 
-output "instance_address" {
+output "address" {
   description = "The address of the RDS instance"
   value       = aws_db_instance.main.address
 }
 
-output "instance_endpoint" {
-  description = "The connection endpoint of the RDS instance"
-  value       = aws_db_instance.main.endpoint
-}
-
-output "endpoint" {
-  description = "The connection endpoint of the RDS instance"
-  value       = aws_db_instance.main.endpoint
-}
-
-output "db_name" {
-  description = "The database name"
-  value       = aws_db_instance.main.db_name
+output "port" {
+  description = "The port of the RDS instance"
+  value       = aws_db_instance.main.port
 }
 
 output "username" {
-  description = "The master username for the database"
-  value       = var.username
+  description = "The master username for the RDS instance"
+  value       = aws_db_instance.main.username
 }
 
-output "port" {
-  description = "The database port"
-  value       = 5432
+output "password" {
+  description = "The master password for the RDS instance"
+  value       = random_password.db_password.result
+  sensitive   = true
+}
+
+output "db_name" {
+  description = "The name of the database"
+  value       = aws_db_instance.main.db_name
 }
 
 output "secret_arn" {
-  description = "The ARN of the secret containing database credentials"
+  description = "The ARN of the Secrets Manager secret"
   value       = aws_secretsmanager_secret.db_credentials.arn
-}
-
-output "connection_string" {
-  description = "The connection string for the database"
-  value       = "postgresql://${var.username}:${random_password.db_password.result}@${aws_db_instance.main.endpoint}/${var.database_name}"
-  sensitive   = true
 }

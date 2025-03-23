@@ -2,7 +2,11 @@
 set -e
 
 # Create the users_test database if it doesn't exist
-PGPASSWORD=${PGPASSWORD} psql -h ${PGHOST} -p ${PGPORT} -U ${DB_USER} -d ${DB_NAME} -c "CREATE DATABASE ${DB_NAME}_test;" || true
-PGPASSWORD=${PGPASSWORD} psql -h ${PGHOST} -p ${PGPORT} -U ${DB_USER} -d ${DB_NAME} -c "GRANT ALL PRIVILEGES ON DATABASE ${DB_NAME}_test TO ${DB_USER};" || true
+psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
+    CREATE DATABASE users_test;
+    GRANT ALL PRIVILEGES ON DATABASE users_test TO postgres;
+EOSQL
 
-echo "PostgreSQL initialization completed"
+echo "PostgreSQL initialization completed" 
+
+

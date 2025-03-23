@@ -11,18 +11,6 @@ locals {
   }
 }
 
-# ECR Repository for Docker images
-module "ecr" {
-  source = "../../modules/ecr"
-
-  repository_name      = var.ecr_config.repository_name
-  environment          = var.environment
-  account_id           = var.account_id
-  image_tag_mutability = var.ecr_config.image_tag_mutability
-  scan_on_push         = var.ecr_config.scan_on_push
-  keep_image_count     = var.ecr_config.keep_image_count
-}
-
 # VPC for the application
 module "vpc" {
   source = "../../modules/vpc"
@@ -104,6 +92,36 @@ resource "aws_iam_role_policy_attachment" "lambda_vpc_access" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
 }
 
+# S3 access for Lambda
+resource "aws_iam_policy" "lambda_s3_access" {
+  name        = "lambda-s3-access-${var.environment}"
+  description = "Allow Lambda to access S3 bucket"
+  
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Action = [
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:ListBucket",
+          "s3:DeleteObject"
+        ],
+        Effect = "Allow",
+        Resource = [
+          "${module.s3.bucket_arn}",
+          "${module.s3.bucket_arn}/*"
+        ]
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "lambda_s3_access" {
+  role       = aws_iam_role.lambda_execution_role.name
+  policy_arn = aws_iam_policy.lambda_s3_access.arn
+}
+
 # Lambda CloudWatch Logs
 resource "aws_cloudwatch_log_group" "lambda_logs" {
   name              = "/aws/lambda/${var.lambda_config.function_name}-${local.env_suffix}"
@@ -116,9 +134,13 @@ module "lambda" {
   source = "../../modules/lambda"
 
   function_name      = "${var.lambda_config.function_name}-${local.env_suffix}"
-  image_repository   = module.ecr.repository_url
   execution_role_arn = aws_iam_role.lambda_execution_role.arn
-
+  
+  # Use the zip deployment instead of Docker image
+  lambda_zip_path    = var.lambda_zip_path # Will default to "lambda_deployment_package.zip" if not provided
+  handler            = var.lambda_config.handler
+  runtime            = var.lambda_config.runtime
+  
   memory_size = var.lambda_config.memory_size
   timeout     = var.lambda_config.timeout
 
@@ -129,10 +151,19 @@ module "lambda" {
 
   environment_variables = {
     for k, v in merge(var.lambda_config.environment_variables, {
-      DATABASE_URL   = "postgresql://${var.rds_config.username}:password@${module.rds.endpoint}/${var.rds_config.database_name}"
+      DATABASE_URL   = "postgresql://${var.rds_config.username}:${random_password.db_password.result}@${module.rds.endpoint}/${var.rds_config.database_name}"
       S3_BUCKET_NAME = module.s3.bucket_name
     }) : k => v if !contains(["AWS_REGION", "AWS_LAMBDA_FUNCTION_NAME"], k)
   }
+  
+  environment = var.environment
+}
+
+# Random password for database if needed
+resource "random_password" "db_password" {
+  length           = 16
+  special          = true
+  override_special = "!#$%&*()-_=+[]{}<>:?"
 }
 
 # API Gateway

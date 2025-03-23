@@ -9,7 +9,9 @@ on:
       - 'requirements.txt'
       - 'Dockerfile'
       - 'setup.py'
-      - '.github/workflows/ci-cd.yml'
+      - '.github/workflows/development-pipeline.yml'
+      - 'lambda_handler.py'
+      - 'create_lambda_package.sh'
   workflow_dispatch:
     inputs:
       run_infrastructure:
@@ -57,6 +59,8 @@ jobs:
               - 'Dockerfile'
               - 'requirements.txt'
               - 'setup.py'
+              - 'lambda_handler.py'
+              - 'create_lambda_package.sh'
 
   terraform-dev:
     name: Terraform Dev Infrastructure
@@ -64,6 +68,9 @@ jobs:
     if: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.run_infrastructure == 'true') || (github.event_name != 'workflow_dispatch' && needs.changes.outputs.terraform == 'true') }}
     runs-on: ubuntu-latest
     environment: dev
+    outputs:
+      db_host: ${{ steps.outputs.outputs.db_host }}
+      db_name: ${{ steps.outputs.outputs.db_name }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -140,73 +147,100 @@ jobs:
       - name: Terraform Apply
         working-directory: terraform/environments/dev
         run: terraform apply -auto-approve tfplan
+        
+      - name: Get Terraform Outputs
+        id: outputs
+        working-directory: terraform/environments/dev
+        run: |
+          DB_HOST=$(terraform output -raw rds_endpoint || echo "")
+          DB_NAME=$(terraform output -raw db_name || echo "")
+          
+          echo "db_host=$DB_HOST" >> $GITHUB_OUTPUT
+          echo "db_name=$DB_NAME" >> $GITHUB_OUTPUT
 
-  build-image:
-    name: Build Docker Image
-    needs: changes
+  build-lambda-package:
+    name: Build Lambda Package
+    needs: [changes]
     if: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.build_and_deploy == 'true') || (github.event_name != 'workflow_dispatch' && needs.changes.outputs.app == 'true') }}
     runs-on: ubuntu-latest
     outputs:
-      ecr_repo_uri: ${{ steps.get-ecr.outputs.ecr_repo_uri }}
-      git_sha_tag: ${{ steps.set-tags.outputs.git_sha_tag }}
-      timestamp_tag: ${{ steps.set-tags.outputs.timestamp_tag }}
+      lambda_package_path: ${{ steps.create-lambda-package.outputs.lambda_package_path }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
 
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Update script permissions
+        run: chmod +x create_lambda_package.sh
+
+      - name: Create Lambda deployment package
+        id: create-lambda-package
+        run: |
+          ./create_lambda_package.sh
+          echo "lambda_package_path=lambda_deployment_package.zip" >> $GITHUB_OUTPUT
+          
+      - name: Upload Lambda package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lambda-package
+          path: lambda_deployment_package.zip
+          retention-days: 5
+
+  terraform-with-lambda:
+    name: Apply Terraform with Lambda Package
+    needs: [terraform-dev, build-lambda-package]
+    if: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.build_and_deploy == 'true') || (github.event_name != 'workflow_dispatch' && needs.changes.outputs.app == 'true') }}
+    runs-on: ubuntu-latest
+    environment: dev
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Download Lambda package
+        uses: actions/download-artifact@v4
+        with:
+          name: lambda-package
+          path: ./
+          
       - name: Configure AWS credentials with Role
         uses: aws-actions/configure-aws-credentials@v2
         with:
           role-to-assume: arn:aws:iam::070503547773:role/GitHubActionsRole
           aws-region: us-east-1
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Get ECR Repository Info
-        id: get-ecr
-        run: |
-          ECR_REPO_NAME="user-api-dev"
-          ECR_REPO=$(aws ecr describe-repositories --repository-names $ECR_REPO_NAME || echo "not exists")
-          if [[ $ECR_REPO == *"not exists"* ]]; then
-            echo "ECR repository does not exist. Creating repository..."
-            aws ecr create-repository --repository-name $ECR_REPO_NAME --image-scanning-configuration scanOnPush=true
-          fi
-          ECR_REPO_URI=$(aws ecr describe-repositories --repository-names $ECR_REPO_NAME --query 'repositories[0].repositoryUri' --output text)
-          echo "ecr_repo_uri=$ECR_REPO_URI" >> $GITHUB_OUTPUT
-
-      - name: Login to Amazon ECR
-        uses: aws-actions/amazon-ecr-login@v1
-
-      - name: Set image tags
-        id: set-tags
-        run: |
-          TIMESTAMP=$(date +%Y%m%d%H%M%S)
-          echo "timestamp_tag=${TIMESTAMP}" >> $GITHUB_OUTPUT
-          echo "git_sha_tag=${{ github.sha }}" >> $GITHUB_OUTPUT
-
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v4
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
         with:
-          context: .
-          platforms: linux/amd64
-          push: true
-          provenance: false
-          tags: |
-            ${{ steps.get-ecr.outputs.ecr_repo_uri }}:${{ steps.set-tags.outputs.git_sha_tag }}
-            ${{ steps.get-ecr.outputs.ecr_repo_uri }}:${{ steps.set-tags.outputs.timestamp_tag }}
-            ${{ steps.get-ecr.outputs.ecr_repo_uri }}:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-        
+          terraform_version: 1.5.0
+
+      - name: Verify Lambda package exists
+        run: |
+          ls -la lambda_deployment_package.zip
+          echo "Lambda package size: $(du -h lambda_deployment_package.zip | cut -f1)"
+
+      - name: Terraform Init
+        working-directory: terraform/environments/dev
+        run: terraform init
+
+      - name: Terraform Apply with Lambda package
+        working-directory: terraform/environments/dev
+        run: |
+          terraform apply -auto-approve \
+            -var="lambda_zip_path=../../../lambda_deployment_package.zip"
+
   test-app:
     name: Test Application
-    needs: [changes, build-image]
+    needs: [terraform-with-lambda]
     if: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.run_tests == 'true') || (github.event_name != 'workflow_dispatch' && needs.changes.outputs.app == 'true') }}
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:13
+        image: postgres:14
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_USER: postgres
@@ -218,13 +252,6 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
-      localstack:
-        image: localstack/localstack:latest
-        env:
-          SERVICES: s3
-          DEFAULT_REGION: us-east-1
-        ports:
-          - 4566:4566
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -257,64 +284,33 @@ jobs:
           pip install -r requirements.txt
           pip install pytest pytest-cov jq
 
-      - name: Update init-db.sh to use environment variables
-        run: |
-          chmod +x init-db.sh
-          sed -i 's/\$POSTGRES_USER/\$DB_USER/g' init-db.sh
-          sed -i 's/\$POSTGRES_DB/\$DB_NAME/g' init-db.sh
+      - name: Update init-db.sh permissions
+        run: chmod +x init-db.sh
 
       - name: Initialize test database
         env:
-          DB_USER: ${{ steps.get-db-creds.outputs.DB_USER }}
-          DB_NAME: ${{ steps.get-db-creds.outputs.DB_NAME }}
+          POSTGRES_USER: ${{ steps.get-db-creds.outputs.DB_USER }}
+          POSTGRES_DB: ${{ steps.get-db-creds.outputs.DB_NAME }}
           PGPASSWORD: ${{ steps.get-db-creds.outputs.DB_PASS }}
-          PGHOST: ${{ steps.get-db-creds.outputs.DB_HOST }}
-          PGPORT: ${{ steps.get-db-creds.outputs.DB_PORT }}
+          PGHOST: localhost
+          PGPORT: 5432
         run: ./init-db.sh
 
-      - name: Run tests
+      - name: Run Lambda tests
         env:
           DATABASE_URL: postgresql://${{ steps.get-db-creds.outputs.DB_USER }}:${{ steps.get-db-creds.outputs.DB_PASS }}@${{ steps.get-db-creds.outputs.DB_HOST }}:${{ steps.get-db-creds.outputs.DB_PORT }}/${{ steps.get-db-creds.outputs.DB_NAME }}_test
-          ENVIRONMENT: test
+          ENVIRONMENT: dev
           AWS_DEFAULT_REGION: us-east-1
-          AWS_ACCESS_KEY_ID: test
-          AWS_SECRET_ACCESS_KEY: test
-          S3_BUCKET_NAME: user-queries
-          AWS_ENDPOINT_URL: http://localhost:4566
-          PYTEST_CURRENT_TEST: True
-          AWS_SECURITY_TOKEN: testing
-          AWS_SESSION_TOKEN: testing
-        run: pytest --cov=app tests/ -v
+          S3_BUCKET_NAME: user-queries-dev
+          PYTEST_CURRENT_TEST: "True"
+          AWS_LAMBDA_FUNCTION_NAME: user-api-dev
+          AWS_REGION: us-east-1
+          AWS_EXECUTION_ENV: AWS_Lambda_python3.11
+        run: pytest --cov=app tests/test_lambda.py -v
 
-  deploy-to-dev:
-    name: Deploy to Dev
-    needs: [changes, build-image, test-app]
-    if: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.build_and_deploy == 'true') || (github.event_name != 'workflow_dispatch' && needs.changes.outputs.app == 'true') }}
-    runs-on: ubuntu-latest
-    environment: dev
-    steps:
-      - name: Configure AWS credentials with Role
-        uses: aws-actions/configure-aws-credentials@v2
+      - name: Upload test coverage report
+        uses: actions/upload-artifact@v4
         with:
-          role-to-assume: arn:aws:iam::070503547773:role/GitHubActionsRole
-          aws-region: us-east-1
-
-      - name: Update Lambda function with ECR image
-        run: |
-          LAMBDA_FUNCTION_NAME="user-api-dev"
-          LAMBDA_EXISTS=$(aws lambda get-function --function-name $LAMBDA_FUNCTION_NAME 2>&1 || echo "not exists")
-          if [[ $LAMBDA_EXISTS == *"not exists"* ]]; then
-            echo "Lambda function doesn't exist. Please check Terraform output."
-            exit 1
-          fi
-          aws lambda update-function-code --function-name $LAMBDA_FUNCTION_NAME --image-uri ${{ needs.build-image.outputs.ecr_repo_uri }}:${{ needs.build-image.outputs.git_sha_tag }}
-
-      - name: Update API Gateway
-        run: |
-          API_NAME="user-api-dev"
-          API_ID=$(aws apigateway get-rest-apis --query "items[?name=='$API_NAME'].id" --output text)
-          if [ -z "$API_ID" ]; then
-            echo "API Gateway doesn't exist. Please check Terraform output."
-            exit 1
-          fi
-          aws apigateway create-deployment --rest-api-id $API_ID --stage-name dev --description "Deployment from GitHub Actions - ${{ needs.build-image.outputs.git_sha_tag }}"
+          name: test-coverage-report
+          path: .coverage
+          retention-days: 5
