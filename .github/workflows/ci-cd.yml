@@ -185,18 +185,18 @@ jobs:
           echo "timestamp_tag=${TIMESTAMP}" >> $GITHUB_OUTPUT
           echo "git_sha_tag=${{ github.sha }}" >> $GITHUB_OUTPUT
 
-      - name: Build and push Docker image
+      - name: Build Docker image
         uses: docker/build-push-action@v3
         with:
           context: .
-          push: true
+          load: true                   # Load image into local Docker (forces Docker manifest format)
+          platforms: linux/amd64
           tags: |
             ${{ steps.get-ecr.outputs.ecr_repo_uri }}:${{ steps.set-tags.outputs.git_sha_tag }}
             ${{ steps.get-ecr.outputs.ecr_repo_uri }}:${{ steps.set-tags.outputs.timestamp_tag }}
             ${{ steps.get-ecr.outputs.ecr_repo_uri }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
   test-app:
     name: Test Application
     needs: [changes, build-image]
