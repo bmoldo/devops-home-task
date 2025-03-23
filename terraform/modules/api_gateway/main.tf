@@ -1,3 +1,5 @@
+data "aws_region" "current" {}
+
 resource "aws_api_gateway_rest_api" "api" {
   name        = var.name
   description = var.description
@@ -32,7 +34,7 @@ resource "aws_api_gateway_integration" "lambda" {
 
   integration_http_method = "POST"
   type                    = "AWS_PROXY"
-  uri                     = var.lambda_function_arn
+  uri                     = "arn:aws:apigateway:${data.aws_region.current.name}:lambda:path/2015-03-31/functions/${var.lambda_function_arn}/invocations"
 }
 
 # API Gateway root to Lambda proxy
@@ -50,7 +52,7 @@ resource "aws_api_gateway_integration" "lambda_root" {
 
   integration_http_method = "POST"
   type                    = "AWS_PROXY"
-  uri                     = var.lambda_function_arn
+  uri                     = "arn:aws:apigateway:${data.aws_region.current.name}:lambda:path/2015-03-31/functions/${var.lambda_function_arn}/invocations"
 }
 
 # Lambda permission to allow API Gateway to invoke Lambda
