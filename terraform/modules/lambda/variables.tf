@@ -43,6 +43,7 @@ variable "environment_variables" {
 variable "environment" {
   description = "Deployment environment"
   type        = string
+  default     = ""
 }
 
 variable "tags" {
