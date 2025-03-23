@@ -335,12 +335,12 @@ jobs:
       - name: Terraform Apply with Lambda package
         working-directory: terraform/environments/dev
         run: |
+          TIMESTAMP=$(date +%Y%m%d%H%M%S)
           terraform apply -auto-approve \
             -var-file=../../config/dev.tfvars \
             -var="use_s3_source=true" \
             -var="s3_bucket=terraform-state-bmoldo-devops-home-task" \
             -var="s3_key=lambda/lambda_deployment_package_${TIMESTAMP}.zip"
-
   test-app:
     name: Test Application
     needs: [terraform-with-lambda]
