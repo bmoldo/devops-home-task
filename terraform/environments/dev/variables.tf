@@ -89,3 +89,34 @@ variable "lambda_zip_path" {
   type        = string
   default     = "lambda_deployment_package.zip"
 }
+
+# Lambda S3 source variables
+variable "use_s3_source" {
+  description = "Whether to use S3 as the source for the Lambda function"
+  type        = bool
+  default     = false
+}
+
+variable "s3_bucket" {
+  description = "S3 bucket containing the Lambda deployment package"
+  type        = string
+  default     = ""
+}
+
+variable "s3_key" {
+  description = "S3 key for the Lambda deployment package"
+  type        = string
+  default     = ""
+}
+
+# If you're using ECR in your configuration, you'll also need this
+variable "ecr_config" {
+  description = "Configuration for the ECR repository"
+  type = object({
+    repository_name      = string
+    image_tag_mutability = string
+    scan_on_push         = bool
+    keep_image_count     = number
+  })
+  default = null
+}
