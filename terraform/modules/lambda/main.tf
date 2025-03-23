@@ -34,13 +34,3 @@ resource "aws_lambda_function" "function" {
     Environment = var.environment
   }, var.tags)
 }
-
-# CloudWatch log group for Lambda logs
-resource "aws_cloudwatch_log_group" "lambda_logs" {
-  name              = "/aws/lambda/${var.function_name}"
-  retention_in_days = 14
-  tags = merge({
-    Name        = "${var.function_name}-logs"
-    Environment = var.environment
-  }, var.tags)
-}
