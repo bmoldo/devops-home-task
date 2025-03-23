@@ -7,7 +7,6 @@ resource "aws_lambda_function" "function" {
   s3_key        = var.use_s3_source ? var.s3_key : null
   
   # When use_s3_source is false, use the local file
-  # IMPORTANT: We must always provide a valid filename or s3_bucket, but not both
   filename      = var.use_s3_source ? null : var.lambda_zip_path
   
   # Only calculate source_code_hash for local files
@@ -36,9 +35,7 @@ resource "aws_lambda_function" "function" {
     Environment = var.environment
   }, var.tags)
   
-  # Prevent deployment from being updated if filename is changed
-  # when we're using S3 source
   lifecycle {
-    ignore_changes = var.use_s3_source ? [filename, source_code_hash] : []
+    ignore_changes = [filename, source_code_hash]
   }
 }
