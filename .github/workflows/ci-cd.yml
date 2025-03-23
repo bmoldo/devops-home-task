@@ -11,6 +11,22 @@ on:
       - 'setup.py'
       - '.github/workflows/ci-cd.yml'
   workflow_dispatch:
+    inputs:
+      run_infrastructure:
+        description: 'Run Terraform Infrastructure'
+        required: true
+        default: true
+        type: boolean
+      run_tests:
+        description: 'Run Tests'
+        required: true
+        default: true
+        type: boolean
+      build_and_deploy:
+        description: 'Build and Deploy'
+        required: true
+        default: true
+        type: boolean
 
 permissions:
   contents: read
@@ -19,6 +35,7 @@ permissions:
 jobs:
   terraform-dev:
     name: Terraform Dev Infrastructure
+    if: ${{ github.event_name == 'push' || github.event.inputs.run_infrastructure == 'true' }}
     runs-on: ubuntu-latest
     environment: dev
     steps:
@@ -72,6 +89,14 @@ jobs:
         working-directory: terraform/environments/dev
         run: terraform init
 
+      - name: Import Existing Resources
+        working-directory: terraform/environments/dev
+        run: |
+          # Try to import resources that might already exist
+          terraform import aws_iam_role.lambda_execution_role lambda-execution-role-dev || echo "Failed to import Lambda role"
+          terraform import aws_cloudwatch_log_group.lambda_logs /aws/lambda/user-api-dev || echo "Failed to import CloudWatch log group"
+          terraform import module.rds.aws_secretsmanager_secret.db_credentials user-api-db-dev-credentials || echo "Failed to import Secret"
+
       - name: Terraform Format
         working-directory: terraform/environments/dev
         run: terraform fmt -check -recursive
@@ -89,7 +114,6 @@ jobs:
 
       - name: Store Plan Artifact
         uses: actions/upload-artifact@v4
-
         with:
           name: terraform-dev-plan
           path: terraform/environments/dev/plan.json
@@ -99,9 +123,72 @@ jobs:
         working-directory: terraform/environments/dev
         run: terraform apply -auto-approve tfplan
 
+  build-image:
+    name: Build and Push Docker Image
+    if: ${{ github.event_name == 'push' || github.event.inputs.build_and_deploy == 'true' }}
+    runs-on: ubuntu-latest
+    environment: dev
+    outputs:
+      ecr_repo_uri: ${{ steps.get-ecr.outputs.ecr_repo_uri }}
+      git_sha_tag: ${{ steps.set-tags.outputs.git_sha_tag }}
+      timestamp_tag: ${{ steps.set-tags.outputs.timestamp_tag }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials with Role
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: arn:aws:iam::070503547773:role/GitHubActionsRole
+          aws-region: us-east-1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Get ECR Repository Info
+        id: get-ecr
+        run: |
+          ECR_REPO_NAME="user-api-dev"
+          ECR_REPO=$(aws ecr describe-repositories --repository-names $ECR_REPO_NAME || echo "not exists")
+          if [[ $ECR_REPO == *"not exists"* ]]; then
+            echo "ECR repository does not exist. Creating repository..."
+            aws ecr create-repository --repository-name $ECR_REPO_NAME --image-scanning-configuration scanOnPush=true
+          fi
+          ECR_REPO_URI=$(aws ecr describe-repositories --repository-names $ECR_REPO_NAME --query 'repositories[0].repositoryUri' --output text)
+          echo "ecr_repo_uri=$ECR_REPO_URI" >> $GITHUB_OUTPUT
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Set image tags
+        id: set-tags
+        run: |
+          TIMESTAMP=$(date +%Y%m%d%H%M%S)
+          echo "timestamp_tag=${TIMESTAMP}" >> $GITHUB_OUTPUT
+          echo "git_sha_tag=${{ github.sha }}" >> $GITHUB_OUTPUT
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v3
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ steps.get-ecr.outputs.ecr_repo_uri }}:${{ steps.set-tags.outputs.git_sha_tag }}
+            ${{ steps.get-ecr.outputs.ecr_repo_uri }}:${{ steps.set-tags.outputs.timestamp_tag }}
+            ${{ steps.get-ecr.outputs.ecr_repo_uri }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Create deployment record
+        run: |
+          aws s3 ls s3://user-queries-dev || aws s3 mb s3://user-queries-dev
+          echo "{\"image\":\"${{ steps.get-ecr.outputs.ecr_repo_uri }}:${{ steps.set-tags.outputs.git_sha_tag }}\",\"timestamp\":\"$(date -u +"%Y-%m-%dT%H:%M:%SZ")\",\"git_sha\":\"${{ github.sha }}\",\"git_ref\":\"${{ github.ref }}\"}" > deployment.json
+          aws s3 cp deployment.json s3://user-queries-dev/deployments/${{ steps.set-tags.outputs.timestamp_tag }}.json || echo "Failed to upload deployment record, continuing..."
+
   test-app:
     name: Test Application
-    needs: terraform-dev
+    if: ${{ github.event_name == 'push' || github.event.inputs.run_tests == 'true' }}
+    needs: build-image
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -157,62 +244,18 @@ jobs:
           AWS_SESSION_TOKEN: testing
         run: pytest --cov=app tests/ -v
 
-  build-and-deploy-dev:
-    name: Build and Deploy to Dev
-    needs: [terraform-dev, test-app]
+  deploy-to-dev:
+    name: Deploy to Dev
+    if: ${{ github.event_name == 'push' || github.event.inputs.build_and_deploy == 'true' }}
+    needs: [build-image, test-app]
     runs-on: ubuntu-latest
     environment: dev
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
       - name: Configure AWS credentials with Role
         uses: aws-actions/configure-aws-credentials@v2
         with:
           role-to-assume: arn:aws:iam::070503547773:role/GitHubActionsRole
           aws-region: us-east-1
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
-
-      - name: Get ECR Repository Info
-        id: get-ecr
-        run: |
-          ECR_REPO_NAME="user-api-dev"
-          ECR_REPO=$(aws ecr describe-repositories --repository-names $ECR_REPO_NAME || echo "not exists")
-          if [[ $ECR_REPO == *"not exists"* ]]; then
-            echo "ECR repository does not exist. Check Terraform deployment."
-            exit 1
-          fi
-          ECR_REPO_URI=$(aws ecr describe-repositories --repository-names $ECR_REPO_NAME --query 'repositories[0].repositoryUri' --output text)
-          echo "ecr_repo_uri=$ECR_REPO_URI" >> $GITHUB_OUTPUT
-
-      - name: Login to Amazon ECR
-        uses: aws-actions/amazon-ecr-login@v1
-
-      - name: Set image tags
-        id: set-tags
-        run: |
-          TIMESTAMP=$(date +%Y%m%d%H%M%S)
-          echo "timestamp_tag=${TIMESTAMP}" >> $GITHUB_OUTPUT
-          echo "git_sha_tag=${{ github.sha }}" >> $GITHUB_OUTPUT
-
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v3
-        with:
-          context: .
-          push: true
-          tags: |
-            ${{ steps.get-ecr.outputs.ecr_repo_uri }}:${{ steps.set-tags.outputs.git_sha_tag }}
-            ${{ steps.get-ecr.outputs.ecr_repo_uri }}:${{ steps.set-tags.outputs.timestamp_tag }}
-            ${{ steps.get-ecr.outputs.ecr_repo_uri }}:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Create deployment record
-        run: |
-          echo "{\"image\":\"${{ steps.get-ecr.outputs.ecr_repo_uri }}:${{ steps.set-tags.outputs.git_sha_tag }}\",\"timestamp\":\"$(date -u +"%Y-%m-%dT%H:%M:%SZ")\",\"git_sha\":\"${{ github.sha }}\",\"git_ref\":\"${{ github.ref }}\"}" > deployment.json
-          aws s3 cp deployment.json s3://user-queries-dev/deployments/${{ steps.set-tags.outputs.timestamp_tag }}.json
 
       - name: Update Lambda function with ECR image
         run: |
@@ -222,7 +265,7 @@ jobs:
             echo "Lambda function doesn't exist. Please check Terraform output."
             exit 1
           fi
-          aws lambda update-function-code --function-name $LAMBDA_FUNCTION_NAME --image-uri ${{ steps.get-ecr.outputs.ecr_repo_uri }}:${{ steps.set-tags.outputs.git_sha_tag }}
+          aws lambda update-function-code --function-name $LAMBDA_FUNCTION_NAME --image-uri ${{ needs.build-image.outputs.ecr_repo_uri }}:${{ needs.build-image.outputs.git_sha_tag }}
 
       - name: Update API Gateway
         run: |
@@ -232,4 +275,4 @@ jobs:
             echo "API Gateway doesn't exist. Please check Terraform output."
             exit 1
           fi
-          aws apigateway create-deployment --rest-api-id $API_ID --stage-name dev --description "Deployment from GitHub Actions - ${{ steps.set-tags.outputs.git_sha_tag }}"
+          aws apigateway create-deployment --rest-api-id $API_ID --stage-name dev --description "Deployment from GitHub Actions - ${{ needs.build-image.outputs.git_sha_tag }}"
