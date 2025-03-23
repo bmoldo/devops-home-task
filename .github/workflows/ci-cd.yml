@@ -9,7 +9,7 @@ on:
       - 'requirements.txt'
       - 'Dockerfile'
       - 'setup.py'
-      - '.github/workflows/development-pipeline.yml'
+      - '.github/workflows/ci-cd.yml'
       - 'lambda_handler.py'
       - 'create_lambda_package.sh'
   workflow_dispatch:
