@@ -115,8 +115,8 @@ resource "aws_cloudwatch_log_group" "lambda_logs" {
 module "lambda" {
   source = "../../modules/lambda"
 
-  function_name      = "${var.lambda_config.function_name}-${local.env_suffix}"
-  image_uri          = "${module.ecr.repository_url}:latest" # Using the latest image from ECR
+  function_name      = "${var.lambda_config.function_name}-${local.env_suffix}" 
+  image_repository   = module.ecr.repository_url
   execution_role_arn = aws_iam_role.lambda_execution_role.arn
 
   memory_size = var.lambda_config.memory_size

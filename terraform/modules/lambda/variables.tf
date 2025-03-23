@@ -52,3 +52,9 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "image_repository" {
+  description = "The ECR repository name/path for the Lambda function"
+  type        = string
+  default     = ""
+}

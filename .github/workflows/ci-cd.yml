@@ -39,6 +39,7 @@ jobs:
     outputs:
       terraform: ${{ steps.filter.outputs.terraform }}
       app: ${{ steps.filter.outputs.app }}
+      any_changes: ${{ steps.check_changes.outputs.any_changes }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -58,12 +59,32 @@ jobs:
               - 'requirements.txt'
               - 'setup.py'
 
+      - name: Check if any changes detected
+        id: check_changes
+        run: |
+          if [[ "${{ steps.filter.outputs.terraform }}" == "true" || "${{ steps.filter.outputs.app }}" == "true" ]]; then
+            echo "any_changes=true" >> $GITHUB_OUTPUT
+          else
+            echo "any_changes=false" >> $GITHUB_OUTPUT
+          fi
+
+  skip-workflow:
+    name: Skip Workflow
+    needs: changes
+    if: |
+      github.event_name != 'workflow_dispatch' && 
+      needs.changes.outputs.any_changes == 'false'
+    runs-on: ubuntu-latest
+    steps:
+      - name: No relevant changes detected
+        run: echo "No relevant changes detected. Skipping workflow."
+
   terraform-dev:
     name: Terraform Dev Infrastructure
     needs: changes
     if: |
-      github.event_name == 'workflow_dispatch' && github.event.inputs.run_infrastructure == 'true' ||
-      github.event_name != 'workflow_dispatch' && needs.changes.outputs.terraform == 'true'
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.run_infrastructure == 'true') ||
+      (github.event_name != 'workflow_dispatch' && needs.changes.outputs.terraform == 'true')
     runs-on: ubuntu-latest
     environment: dev
     steps:
@@ -116,7 +137,15 @@ jobs:
       - name: Terraform Init
         working-directory: terraform/environments/dev
         run: terraform init
-        
+
+      - name: Import Existing Resources
+        working-directory: terraform/environments/dev
+        run: |
+          # Try to import resources that might already exist
+          terraform import aws_iam_role.lambda_execution_role lambda-execution-role-dev || echo "Failed to import Lambda role"
+          terraform import aws_cloudwatch_log_group.lambda_logs /aws/lambda/user-api-dev || echo "Failed to import CloudWatch log group"
+          terraform import module.rds.aws_secretsmanager_secret.db_credentials user-api-db-dev-credentials || echo "Failed to import Secret"
+
       - name: Terraform Format
         working-directory: terraform/environments/dev
         run: terraform fmt -check -recursive
@@ -147,8 +176,8 @@ jobs:
     name: Build and Push Docker Image
     needs: changes
     if: |
-      github.event_name == 'workflow_dispatch' && github.event.inputs.build_and_deploy == 'true' ||
-      github.event_name != 'workflow_dispatch' && needs.changes.outputs.app == 'true'
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.build_and_deploy == 'true') ||
+      (github.event_name != 'workflow_dispatch' && needs.changes.outputs.app == 'true')
     runs-on: ubuntu-latest
     environment: dev
     outputs:
@@ -213,8 +242,8 @@ jobs:
     name: Test Application
     needs: changes
     if: |
-      github.event_name == 'workflow_dispatch' && github.event.inputs.run_tests == 'true' ||
-      github.event_name != 'workflow_dispatch' && needs.changes.outputs.app == 'true'
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.run_tests == 'true') ||
+      (github.event_name != 'workflow_dispatch' && needs.changes.outputs.app == 'true')
     runs-on: ubuntu-latest
     services:
       postgres:
