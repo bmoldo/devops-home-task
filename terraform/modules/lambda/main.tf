@@ -7,9 +7,9 @@ resource "aws_lambda_function" "function" {
   s3_bucket     = var.use_s3_source ? var.s3_bucket : null
   s3_key        = var.use_s3_source ? var.s3_key : null
   
-  # If using local file, these values will be used
-  filename         = var.use_s3_source ? null : var.lambda_zip_path
-  source_code_hash = var.use_s3_source ? null : filebase64sha256(var.lambda_zip_path)
+  # If using local file, these values will be used - only if the file exists
+  filename         = var.use_s3_source ? null : (fileexists(var.lambda_zip_path) ? var.lambda_zip_path : null)
+  source_code_hash = var.use_s3_source ? null : (fileexists(var.lambda_zip_path) ? filebase64sha256(var.lambda_zip_path) : null)
   
   handler          = var.handler
   runtime          = var.runtime
