@@ -191,6 +191,7 @@ jobs:
           context: .
           platforms: linux/amd64
           push: true
+          provenance: false
           tags: |
             ${{ steps.get-ecr.outputs.ecr_repo_uri }}:${{ steps.set-tags.outputs.git_sha_tag }}
             ${{ steps.get-ecr.outputs.ecr_repo_uri }}:${{ steps.set-tags.outputs.timestamp_tag }}
