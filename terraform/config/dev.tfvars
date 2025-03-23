@@ -28,7 +28,7 @@ vpc_config = {
 }
 
 rds_config = {
-  identifier              = "users_test"
+  identifier              = "users-test"
   engine                  = "postgres"
   engine_version          = "14"
   instance_class          = "db.t3.micro" # Minimum viable for dev
