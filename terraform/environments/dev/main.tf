@@ -127,14 +127,12 @@ module "lambda" {
     security_group_ids = [module.vpc.lambda_security_group_id]
   }
 
-  environment_variables = merge(var.lambda_config.environment_variables, {
-    DATABASE_URL   = "postgresql://${var.rds_config.username}:password@${module.rds.endpoint}/${var.rds_config.database_name}"
-    S3_BUCKET_NAME = module.s3.bucket_name
-  })
-
-  environment = var.environment
-
-  depends_on = [module.rds, module.s3, aws_cloudwatch_log_group.lambda_logs]
+  environment_variables = {
+    for k, v in merge(var.lambda_config.environment_variables, {
+      DATABASE_URL   = "postgresql://${var.rds_config.username}:password@${module.rds.endpoint}/${var.rds_config.database_name}"
+      S3_BUCKET_NAME = module.s3.bucket_name
+    }) : k => v if !contains(["AWS_REGION", "AWS_LAMBDA_FUNCTION_NAME"], k)
+  }
 }
 
 # API Gateway
