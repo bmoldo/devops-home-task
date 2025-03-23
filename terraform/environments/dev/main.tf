@@ -66,7 +66,7 @@ module "s3" {
 # S3 Bucket for Lambda deployment packages
 resource "aws_s3_bucket" "lambda_packages" {
   bucket = "lambda-packages-${var.environment}-${var.account_id}"
-  
+
   tags = merge(local.common_tags, {
     Name = "Lambda Deployment Packages - ${var.environment}"
   })
@@ -75,7 +75,7 @@ resource "aws_s3_bucket" "lambda_packages" {
 # Configure versioning for Lambda packages bucket
 resource "aws_s3_bucket_versioning" "lambda_packages_versioning" {
   bucket = aws_s3_bucket.lambda_packages.id
-  
+
   versioning_configuration {
     status = "Enabled"
   }
@@ -109,16 +109,16 @@ resource "aws_s3_bucket_lifecycle_configuration" "lambda_packages_lifecycle" {
   rule {
     id     = "expire-old-packages"
     status = "Enabled"
-    
+
     filter {
       prefix = "lambda/"
     }
-    
+
     # Keep previous Lambda versions for 30 days
     expiration {
       days = 30
     }
-    
+
     # Add noncurrent version expiration
     noncurrent_version_expiration {
       noncurrent_days = 7
