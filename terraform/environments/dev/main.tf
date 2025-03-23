@@ -96,7 +96,7 @@ resource "aws_iam_role_policy_attachment" "lambda_vpc_access" {
 resource "aws_iam_policy" "lambda_s3_access" {
   name        = "lambda-s3-access-${var.environment}"
   description = "Allow Lambda to access S3 bucket"
-  
+
   policy = jsonencode({
     Version = "2012-10-17",
     Statement = [
@@ -135,12 +135,12 @@ module "lambda" {
 
   function_name      = "${var.lambda_config.function_name}-${local.env_suffix}"
   execution_role_arn = aws_iam_role.lambda_execution_role.arn
-  
+
   # Use the zip deployment instead of Docker image
-  lambda_zip_path    = var.lambda_zip_path # Will default to "lambda_deployment_package.zip" if not provided
-  handler            = var.lambda_config.handler
-  runtime            = var.lambda_config.runtime
-  
+  lambda_zip_path = var.lambda_zip_path # Will default to "lambda_deployment_package.zip" if not provided
+  handler         = var.lambda_config.handler
+  runtime         = var.lambda_config.runtime
+
   memory_size = var.lambda_config.memory_size
   timeout     = var.lambda_config.timeout
 
@@ -155,7 +155,7 @@ module "lambda" {
       S3_BUCKET_NAME = module.s3.bucket_name
     }) : k => v if !contains(["AWS_REGION", "AWS_LAMBDA_FUNCTION_NAME"], k)
   }
-  
+
   environment = var.environment
 }
 
