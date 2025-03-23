@@ -62,7 +62,7 @@ jobs:
               - 'lambda_handler.py'
               - 'create_lambda_package.sh'
 
-  terraform:
+  terraform-dev:
     name: Terraform Dev Infrastructure
     needs: changes
     if: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.run_infrastructure == 'true') || (github.event_name != 'workflow_dispatch' && needs.changes.outputs.terraform == 'true') }}
