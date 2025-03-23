@@ -33,9 +33,37 @@ permissions:
   id-token: write
 
 jobs:
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      terraform: ${{ steps.filter.outputs.terraform }}
+      app: ${{ steps.filter.outputs.app }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0  # Fetch all history to correctly detect changes
+
+      - name: Check for file changes
+        id: filter
+        uses: dorny/paths-filter@v2
+        with:
+          filters: |
+            terraform:
+              - 'terraform/**'
+            app:
+              - 'app/**'
+              - 'Dockerfile'
+              - 'requirements.txt'
+              - 'setup.py'
+
   terraform-dev:
     name: Terraform Dev Infrastructure
-    if: ${{ github.event_name == 'push' || github.event.inputs.run_infrastructure == 'true' }}
+    needs: changes
+    if: |
+      github.event_name == 'workflow_dispatch' && github.event.inputs.run_infrastructure == 'true' ||
+      github.event_name != 'workflow_dispatch' && needs.changes.outputs.terraform == 'true'
     runs-on: ubuntu-latest
     environment: dev
     steps:
@@ -88,15 +116,7 @@ jobs:
       - name: Terraform Init
         working-directory: terraform/environments/dev
         run: terraform init
-
-      - name: Import Existing Resources
-        working-directory: terraform/environments/dev
-        run: |
-          # Try to import resources that might already exist
-          terraform import aws_iam_role.lambda_execution_role lambda-execution-role-dev || echo "Failed to import Lambda role"
-          terraform import aws_cloudwatch_log_group.lambda_logs /aws/lambda/user-api-dev || echo "Failed to import CloudWatch log group"
-          terraform import module.rds.aws_secretsmanager_secret.db_credentials user-api-db-dev-credentials || echo "Failed to import Secret"
-
+        
       - name: Terraform Format
         working-directory: terraform/environments/dev
         run: terraform fmt -check -recursive
@@ -125,7 +145,10 @@ jobs:
 
   build-image:
     name: Build and Push Docker Image
-    if: ${{ github.event_name == 'push' || github.event.inputs.build_and_deploy == 'true' }}
+    needs: changes
+    if: |
+      github.event_name == 'workflow_dispatch' && github.event.inputs.build_and_deploy == 'true' ||
+      github.event_name != 'workflow_dispatch' && needs.changes.outputs.app == 'true'
     runs-on: ubuntu-latest
     environment: dev
     outputs:
@@ -182,13 +205,16 @@ jobs:
       - name: Create deployment record
         run: |
           aws s3 ls s3://user-queries-dev || aws s3 mb s3://user-queries-dev
-          echo "{\"image\":\"${{ steps.get-ecr.outputs.ecr_repo_uri }}:${{ steps.set-tags.outputs.git_sha_tag }}\",\"timestamp\":\"$(date -u +"%Y-%m-%dT%H:%M:%SZ")\",\"git_sha\":\"${{ github.sha }}\",\"git_ref\":\"${{ github.ref }}\"}" > deployment.json
-          aws s3 cp deployment.json s3://user-queries-dev/deployments/${{ steps.set-tags.outputs.timestamp_tag }}.json || echo "Failed to upload deployment record, continuing..."
+          mkdir -p deployments
+          echo "{\"image\":\"${{ steps.get-ecr.outputs.ecr_repo_uri }}:${{ steps.set-tags.outputs.git_sha_tag }}\",\"timestamp\":\"$(date -u +"%Y-%m-%dT%H:%M:%SZ")\",\"git_sha\":\"${{ github.sha }}\",\"git_ref\":\"${{ github.ref }}\"}" > deployments/${{ steps.set-tags.outputs.timestamp_tag }}.json
+          aws s3 cp deployments/${{ steps.set-tags.outputs.timestamp_tag }}.json s3://user-queries-dev/deployments/ || echo "Failed to upload deployment record, continuing..."
 
   test-app:
     name: Test Application
-    if: ${{ github.event_name == 'push' || github.event.inputs.run_tests == 'true' }}
-    needs: build-image
+    needs: changes
+    if: |
+      github.event_name == 'workflow_dispatch' && github.event.inputs.run_tests == 'true' ||
+      github.event_name != 'workflow_dispatch' && needs.changes.outputs.app == 'true'
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -246,8 +272,10 @@ jobs:
 
   deploy-to-dev:
     name: Deploy to Dev
-    if: ${{ github.event_name == 'push' || github.event.inputs.build_and_deploy == 'true' }}
-    needs: [build-image, test-app]
+    needs: [changes, build-image, test-app]
+    if: |
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.build_and_deploy == 'true') ||
+      (github.event_name != 'workflow_dispatch' && needs.changes.outputs.app == 'true')
     runs-on: ubuntu-latest
     environment: dev
     steps:
