@@ -134,7 +134,14 @@ jobs:
         working-directory: terraform/environments/dev
         id: plan
         run: |
-          terraform plan -var-file=../../config/dev.tfvars -out=tfplan
+          # Create a placeholder zip if it doesn't exist for initial deployment
+          if [ ! -f "../../../lambda_deployment_package.zip" ]; then
+            echo "Creating placeholder Lambda ZIP for initial deployment"
+            touch placeholder.txt
+            zip ../../../lambda_deployment_package.zip placeholder.txt
+          fi
+          
+          terraform plan -var-file=../../config/dev.tfvars -var="lambda_zip_path=../../../lambda_deployment_package.zip" -out=tfplan
           terraform show -json tfplan > plan.json
 
       - name: Store Plan Artifact
@@ -146,7 +153,7 @@ jobs:
 
       - name: Terraform Apply
         working-directory: terraform/environments/dev
-        run: terraform apply -auto-approve tfplan
+        run: terraform apply -auto-approve -var="lambda_zip_path=../../../lambda_deployment_package.zip" tfplan
         
       - name: Get Terraform Outputs
         id: outputs
