@@ -1,12 +1,3 @@
-data "aws_ecr_repository" "service_repo" {
-  name = split("/", var.image_repository)[1]
-}
-
-data "aws_ecr_image" "service_image" {
-  repository_name = data.aws_ecr_repository.service_repo.name
-  image_tag       = "latest"
-}
-
 resource "aws_lambda_function" "function" {
   function_name = var.function_name
   role          = var.execution_role_arn
