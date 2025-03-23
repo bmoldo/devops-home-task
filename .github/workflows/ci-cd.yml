@@ -138,14 +138,6 @@ jobs:
         working-directory: terraform/environments/dev
         run: terraform init
 
-      - name: Import Existing Resources
-        working-directory: terraform/environments/dev
-        run: |
-          # Try to import resources that might already exist
-          terraform import aws_iam_role.lambda_execution_role lambda-execution-role-dev || echo "Failed to import Lambda role"
-          terraform import aws_cloudwatch_log_group.lambda_logs /aws/lambda/user-api-dev || echo "Failed to import CloudWatch log group"
-          terraform import module.rds.aws_secretsmanager_secret.db_credentials user-api-db-dev-credentials || echo "Failed to import Secret"
-
       - name: Terraform Format
         working-directory: terraform/environments/dev
         run: terraform fmt -check -recursive
