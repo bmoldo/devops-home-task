@@ -153,7 +153,7 @@ jobs:
 
       - name: Terraform Apply
         working-directory: terraform/environments/dev
-        run: terraform apply -auto-approve -var="lambda_zip_path=../../../lambda_deployment_package.zip" tfplan
+        run: terraform apply -auto-approve tfplan
         
       - name: Get Terraform Outputs
         id: outputs
