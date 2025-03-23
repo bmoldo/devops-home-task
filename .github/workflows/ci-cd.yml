@@ -161,7 +161,7 @@ jobs:
           aws-region: us-east-1
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+        uses: docker/setup-buildx-action@v3
 
       - name: Get ECR Repository Info
         id: get-ecr
@@ -185,18 +185,19 @@ jobs:
           echo "timestamp_tag=${TIMESTAMP}" >> $GITHUB_OUTPUT
           echo "git_sha_tag=${{ github.sha }}" >> $GITHUB_OUTPUT
 
-      - name: Build Docker image
-        uses: docker/build-push-action@v3
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v4
         with:
           context: .
-          load: true                   # Load image into local Docker (forces Docker manifest format)
           platforms: linux/amd64
+          push: true
           tags: |
             ${{ steps.get-ecr.outputs.ecr_repo_uri }}:${{ steps.set-tags.outputs.git_sha_tag }}
             ${{ steps.get-ecr.outputs.ecr_repo_uri }}:${{ steps.set-tags.outputs.timestamp_tag }}
             ${{ steps.get-ecr.outputs.ecr_repo_uri }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
+        
   test-app:
     name: Test Application
     needs: [changes, build-image]
