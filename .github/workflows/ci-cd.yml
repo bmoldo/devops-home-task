@@ -229,6 +229,22 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: arn:aws:iam::070503547773:role/GitHubActionsRole
+          aws-region: us-east-1
+
+      - name: Get database credentials from Secrets Manager
+        id: get-db-creds
+        run: |
+          SECRET_VALUE=$(aws secretsmanager get-secret-value --secret-id arn:aws:secretsmanager:us-east-1:070503547773:secret:user-api-db-dev-credentials-fIuI0q --query SecretString --output text)
+          echo "DB_HOST=$(echo $SECRET_VALUE | jq -r '.host')" >> $GITHUB_OUTPUT
+          echo "DB_USER=$(echo $SECRET_VALUE | jq -r '.username')" >> $GITHUB_OUTPUT
+          echo "DB_PASS=$(echo $SECRET_VALUE | jq -r '.password')" >> $GITHUB_OUTPUT
+          echo "DB_NAME=$(echo $SECRET_VALUE | jq -r '.dbname')" >> $GITHUB_OUTPUT
+          echo "DB_PORT=$(echo $SECRET_VALUE | jq -r '.port')" >> $GITHUB_OUTPUT
+
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
@@ -239,14 +255,26 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pytest pytest-cov
+          pip install pytest pytest-cov jq
+
+      - name: Update init-db.sh to use environment variables
+        run: |
+          chmod +x init-db.sh
+          sed -i 's/\$POSTGRES_USER/\$DB_USER/g' init-db.sh
+          sed -i 's/\$POSTGRES_DB/\$DB_NAME/g' init-db.sh
 
       - name: Initialize test database
+        env:
+          DB_USER: ${{ steps.get-db-creds.outputs.DB_USER }}
+          DB_NAME: ${{ steps.get-db-creds.outputs.DB_NAME }}
+          PGPASSWORD: ${{ steps.get-db-creds.outputs.DB_PASS }}
+          PGHOST: ${{ steps.get-db-creds.outputs.DB_HOST }}
+          PGPORT: ${{ steps.get-db-creds.outputs.DB_PORT }}
         run: ./init-db.sh
 
       - name: Run tests
         env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/users
+          DATABASE_URL: postgresql://${{ steps.get-db-creds.outputs.DB_USER }}:${{ steps.get-db-creds.outputs.DB_PASS }}@${{ steps.get-db-creds.outputs.DB_HOST }}:${{ steps.get-db-creds.outputs.DB_PORT }}/${{ steps.get-db-creds.outputs.DB_NAME }}_test
           ENVIRONMENT: test
           AWS_DEFAULT_REGION: us-east-1
           AWS_ACCESS_KEY_ID: test
