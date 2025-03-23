@@ -37,3 +37,13 @@ output "api_gateway_url" {
   description = "API Gateway URL"
   value       = "${module.api_gateway.invoke_url}${var.api_gateway_config.stage_name}/"
 }
+
+output "app_data_bucket" {
+  description = "The S3 bucket for application data (user queries)"
+  value       = module.s3.bucket_name
+}
+
+output "lambda_packages_bucket" {
+  description = "The S3 bucket for Lambda deployment packages"
+  value       = aws_s3_bucket.lambda_packages.bucket
+}

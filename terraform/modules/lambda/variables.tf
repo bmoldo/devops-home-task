@@ -64,3 +64,22 @@ variable "lambda_zip_path" {
   type        = string
   default     = "lambda_deployment_package.zip"
 }
+
+# New variables for S3-based deployment
+variable "use_s3_source" {
+  description = "Whether to use S3 as the source for the Lambda code"
+  type        = bool
+  default     = false
+}
+
+variable "s3_bucket" {
+  description = "S3 bucket containing the Lambda deployment package"
+  type        = string
+  default     = ""
+}
+
+variable "s3_key" {
+  description = "S3 key of the Lambda deployment package"
+  type        = string
+  default     = ""
+}

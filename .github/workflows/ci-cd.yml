@@ -67,6 +67,88 @@ jobs:
               - 'lambda_handler.py'
               - 'create_lambda_package.sh'
 
+  build-lambda-package:
+    name: Build Lambda Package
+    needs: [changes]
+    if: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.build_and_deploy == 'true' && github.event.inputs.destroy_infrastructure == 'false') || (github.event_name != 'workflow_dispatch' && needs.changes.outputs.app == 'true') }}
+    runs-on: ubuntu-latest
+    outputs:
+      lambda_package_path: ${{ steps.create-lambda-package.outputs.lambda_package_path }}
+      s3_lambda_key: ${{ steps.upload-lambda.outputs.s3_lambda_key }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Update script permissions
+        run: chmod +x create_lambda_package.sh
+
+      - name: Verify script content
+        run: |
+          echo "Checking script content:"
+          head -20 create_lambda_package.sh
+          echo "..."
+          tail -5 create_lambda_package.sh
+
+      - name: Create Lambda deployment package
+        id: create-lambda-package
+        run: |
+          ./create_lambda_package.sh
+          echo "lambda_package_path=lambda_deployment_package.zip" >> $GITHUB_OUTPUT
+          # Verify the zip file is not empty
+          if [ ! -s lambda_deployment_package.zip ]; then
+            echo "ERROR: Lambda deployment package is empty!"
+            exit 1
+          fi
+          echo "ZIP file details:"
+          ls -la lambda_deployment_package.zip
+          echo "ZIP contents (first 10 files):"
+          unzip -l lambda_deployment_package.zip | head -10
+
+      - name: Configure AWS credentials with Role
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: arn:aws:iam::070503547773:role/GitHubActionsRole
+          aws-region: us-east-1
+
+      - name: Upload Lambda package to S3
+        id: upload-lambda
+        run: |
+          TIMESTAMP=$(date +%Y%m%d%H%M%S)
+          S3_KEY="lambda/lambda_deployment_package_${TIMESTAMP}.zip"
+          S3_BUCKET="terraform-state-${{ github.repository_owner }}-${{ github.event.repository.name }}"
+          
+          # Ensure bucket exists
+          if ! aws s3api head-bucket --bucket $S3_BUCKET 2>/dev/null; then
+            echo "Creating S3 bucket for Lambda packages"
+            aws s3api create-bucket --bucket $S3_BUCKET --region us-east-1
+          fi
+          
+          # Upload to S3
+          aws s3 cp lambda_deployment_package.zip s3://$S3_BUCKET/$S3_KEY
+          
+          # Verify upload
+          if aws s3 ls s3://$S3_BUCKET/$S3_KEY; then
+            echo "Lambda package uploaded successfully to s3://$S3_BUCKET/$S3_KEY"
+            echo "s3_lambda_key=$S3_KEY" >> $GITHUB_OUTPUT
+            echo "s3_bucket=$S3_BUCKET" >> $GITHUB_OUTPUT
+          else
+            echo "Failed to upload Lambda package to S3"
+            exit 1
+          fi
+          
+      - name: Upload Lambda package artifact (for reference)
+        uses: actions/upload-artifact@v4
+        with:
+          name: lambda-package
+          path: lambda_deployment_package.zip
+          retention-days: 5
+
   terraform-dev:
     name: Terraform Dev Infrastructure
     needs: changes
@@ -123,6 +205,25 @@ jobs:
           }
           EOF
 
+      - name: Create valid placeholder Lambda ZIP
+        run: |
+          echo "Creating valid placeholder Lambda ZIP for initial deployment"
+          mkdir -p placeholder_lambda
+          echo '
+          def lambda_handler(event, context):
+              return {
+                  "statusCode": 200,
+                  "body": "Placeholder Lambda function"
+              }
+          ' > placeholder_lambda/lambda_handler.py
+          cd placeholder_lambda
+          zip -r ../lambda_deployment_package.zip .
+          cd ..
+          
+          # Verify the placeholder zip
+          ls -la lambda_deployment_package.zip
+          unzip -l lambda_deployment_package.zip
+
       - name: Terraform Init
         working-directory: terraform/environments/dev
         run: terraform init
@@ -139,13 +240,6 @@ jobs:
         working-directory: terraform/environments/dev
         id: plan
         run: |
-          # Create a placeholder zip if it doesn't exist for initial deployment
-          if [ ! -f "../../../lambda_deployment_package.zip" ]; then
-            echo "Creating placeholder Lambda ZIP for initial deployment"
-            touch placeholder.txt
-            zip ../../../lambda_deployment_package.zip placeholder.txt
-          fi
-          
           terraform plan -var-file=../../config/dev.tfvars -var="lambda_zip_path=../../../lambda_deployment_package.zip" -out=tfplan
           terraform show -json tfplan > plan.json
 
@@ -170,39 +264,6 @@ jobs:
           echo "db_host=$DB_HOST" >> $GITHUB_OUTPUT
           echo "db_name=$DB_NAME" >> $GITHUB_OUTPUT
 
-  build-lambda-package:
-    name: Build Lambda Package
-    needs: [changes]
-    if: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.build_and_deploy == 'true' && github.event.inputs.destroy_infrastructure == 'false') || (github.event_name != 'workflow_dispatch' && needs.changes.outputs.app == 'true') }}
-    runs-on: ubuntu-latest
-    outputs:
-      lambda_package_path: ${{ steps.create-lambda-package.outputs.lambda_package_path }}
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Setup Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.11'
-          cache: 'pip'
-
-      - name: Update script permissions
-        run: chmod +x create_lambda_package.sh
-
-      - name: Create Lambda deployment package
-        id: create-lambda-package
-        run: |
-          ./create_lambda_package.sh
-          echo "lambda_package_path=lambda_deployment_package.zip" >> $GITHUB_OUTPUT
-          
-      - name: Upload Lambda package artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: lambda-package
-          path: lambda_deployment_package.zip
-          retention-days: 5
-
   terraform-with-lambda:
     name: Apply Terraform with Lambda Package
     needs: [terraform-dev, build-lambda-package]
@@ -213,12 +274,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
       
-      - name: Download Lambda package
-        uses: actions/download-artifact@v4
-        with:
-          name: lambda-package
-          path: ./
-          
       - name: Configure AWS credentials with Role
         uses: aws-actions/configure-aws-credentials@v2
         with:
@@ -230,20 +285,38 @@ jobs:
         with:
           terraform_version: 1.5.0
 
-      - name: Verify Lambda package exists
+      - name: Create Lambda S3 variables file
         run: |
-          ls -la lambda_deployment_package.zip
-          echo "Lambda package size: $(du -h lambda_deployment_package.zip | cut -f1)"
+          S3_BUCKET="terraform-state-${{ github.repository_owner }}-${{ github.event.repository.name }}"
+          S3_KEY="${{ needs.build-lambda-package.outputs.s3_lambda_key }}"
+          
+          echo "Creating Lambda S3 variables file with:"
+          echo "Bucket: $S3_BUCKET"
+          echo "Key: $S3_KEY"
+          
+          mkdir -p terraform/environments/dev
+          cat > terraform/environments/dev/lambda_vars.auto.tfvars <<EOF
+          use_s3_source = true
+          s3_bucket = "$S3_BUCKET"
+          s3_key = "$S3_KEY"
+          EOF
 
       - name: Terraform Init
         working-directory: terraform/environments/dev
         run: terraform init
 
+      - name: Verify Lambda S3 variables file
+        run: |
+          echo "Contents of lambda_vars.auto.tfvars:"
+          cat terraform/environments/dev/lambda_vars.auto.tfvars
+
       - name: Terraform Apply with Lambda package
         working-directory: terraform/environments/dev
         run: |
           terraform apply -auto-approve \
-            -var="lambda_zip_path=../../../lambda_deployment_package.zip"
+            -var="use_s3_source=true" \
+            -var="s3_bucket=terraform-state-${{ github.repository_owner }}-${{ github.event.repository.name }}" \
+            -var="s3_key=${{ needs.build-lambda-package.outputs.s3_lambda_key }}"
 
   test-app:
     name: Test Application
@@ -360,15 +433,19 @@ jobs:
           }
           EOF
 
-      - name: Terraform Init
-        working-directory: terraform/environments/dev
-        run: terraform init
-
       - name: Create placeholder zip for destroy
         run: |
           echo "Creating placeholder Lambda ZIP for destroy operation"
-          touch placeholder.txt
-          zip lambda_deployment_package.zip placeholder.txt
+          mkdir -p placeholder
+          echo "placeholder" > placeholder/placeholder.txt
+          cd placeholder
+          zip -r ../lambda_deployment_package.zip .
+          cd ..
+          ls -la lambda_deployment_package.zip
+
+      - name: Terraform Init
+        working-directory: terraform/environments/dev
+        run: terraform init
 
       - name: Terraform Destroy Plan
         working-directory: terraform/environments/dev

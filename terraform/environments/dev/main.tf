@@ -63,6 +63,69 @@ module "s3" {
   environment = var.environment
 }
 
+# S3 Bucket for Lambda deployment packages
+resource "aws_s3_bucket" "lambda_packages" {
+  bucket = "lambda-packages-${var.environment}-${var.account_id}"
+  
+  tags = merge(local.common_tags, {
+    Name = "Lambda Deployment Packages - ${var.environment}"
+  })
+}
+
+# Configure versioning for Lambda packages bucket
+resource "aws_s3_bucket_versioning" "lambda_packages_versioning" {
+  bucket = aws_s3_bucket.lambda_packages.id
+  
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+# Configure encryption for Lambda packages bucket
+resource "aws_s3_bucket_server_side_encryption_configuration" "lambda_packages_encryption" {
+  bucket = aws_s3_bucket.lambda_packages.id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+
+# Block public access for Lambda packages bucket
+resource "aws_s3_bucket_public_access_block" "lambda_packages_block_public_access" {
+  bucket = aws_s3_bucket.lambda_packages.id
+
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+# Add lifecycle rules for Lambda packages bucket
+resource "aws_s3_bucket_lifecycle_configuration" "lambda_packages_lifecycle" {
+  bucket = aws_s3_bucket.lambda_packages.id
+
+  rule {
+    id     = "expire-old-packages"
+    status = "Enabled"
+    
+    filter {
+      prefix = "lambda/"
+    }
+    
+    # Keep previous Lambda versions for 30 days
+    expiration {
+      days = 30
+    }
+    
+    # Add noncurrent version expiration
+    noncurrent_version_expiration {
+      noncurrent_days = 7
+    }
+  }
+}
+
 # Create IAM role for Lambda
 resource "aws_iam_role" "lambda_execution_role" {
   name = "lambda-execution-role-${var.environment}"
