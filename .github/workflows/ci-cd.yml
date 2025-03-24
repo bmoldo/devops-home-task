@@ -156,7 +156,8 @@ jobs:
       - name: Prepare S3 state bucket
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
-          BUCKET_NAME="terraform-state-${ENVIRONMENT}"
+          ACCOUNT_ID="070503547773"
+          BUCKET_NAME="terraform-state-${ENVIRONMENT}-${ACCOUNT_ID}"
           
           # Check if bucket exists
           if ! aws s3api head-bucket --bucket $BUCKET_NAME 2>/dev/null; then
@@ -408,9 +409,10 @@ jobs:
         id: upload-lambda
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
+          ACCOUNT_ID="070503547773"
           TIMESTAMP=$(date +%Y%m%d%H%M%S)
           S3_KEY="lambda/lambda_deployment_package_${TIMESTAMP}.zip"
-          S3_BUCKET="lambda-zip-${ENVIRONMENT}"
+          S3_BUCKET="lambda-zip-${ENVIRONMENT}-${ACCOUNT_ID}"
           
           # Check if bucket exists (should be created by Terraform)
           if ! aws s3api head-bucket --bucket $S3_BUCKET 2>/dev/null; then
@@ -458,7 +460,8 @@ jobs:
       - name: Create Lambda S3 variables file
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
-          S3_BUCKET="lambda-zip-${ENVIRONMENT}"
+          ACCOUNT_ID="070503547773"
+          S3_BUCKET="lambda-zip-${ENVIRONMENT}-${ACCOUNT_ID}"
           S3_KEY="${{ needs.build-lambda-package.outputs.s3_lambda_key }}"
           
           cat > terraform/environments/$ENVIRONMENT/lambda_vars.auto.tfvars <<EOF
@@ -488,8 +491,9 @@ jobs:
       - name: Terraform Apply with Lambda package
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
+          ACCOUNT_ID="070503547773"
           TFVARS_FILE="${{ needs.determine-environment.outputs.tfvars_file }}"
-          S3_BUCKET="lambda-zip-${ENVIRONMENT}"
+          S3_BUCKET="lambda-zip-${ENVIRONMENT}-${ACCOUNT_ID}"
           S3_KEY="${{ needs.build-lambda-package.outputs.s3_lambda_key }}"
           
           cd terraform/environments/$ENVIRONMENT
