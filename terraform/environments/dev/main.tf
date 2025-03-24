@@ -243,8 +243,8 @@ module "api_gateway" {
   stage_name    = var.api_gateway_config.stage_name
   description   = var.api_gateway_config.description
 
-  lambda_function_name = module.lambda[0].function_name
-  lambda_function_arn  = module.lambda[0].function_arn
+  lambda_function_name = module.lambda.function_name
+  lambda_function_arn  = module.lambda.function_arn
 
   environment = var.environment
 

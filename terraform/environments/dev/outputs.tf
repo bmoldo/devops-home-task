@@ -38,6 +38,7 @@ output "api_gateway_url" {
   value       = length(module.api_gateway) > 0 ? "${module.api_gateway[0].invoke_url}${var.api_gateway_config.stage_name}/" : null
 }
 
+
 output "app_data_bucket" {
   description = "The S3 bucket for application data (user queries)"
   value       = module.s3.bucket_name
