@@ -19,6 +19,13 @@ vpc_config = {
   single_nat_gateway = true
 }
 
+api_gateway_config = {
+  name          = "user-api"
+  endpoint_type = "REGIONAL"
+  stage_name    = "dev"
+  description   = "User API Gateway for Development Environment"
+}
+
 rds_config = {
   identifier              = "user-api"
   engine                  = "postgres"
