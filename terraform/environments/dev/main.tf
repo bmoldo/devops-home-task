@@ -203,7 +203,7 @@ module "lambda" {
   execution_role_arn = aws_iam_role.lambda_execution_role.arn
 
   s3_bucket = aws_s3_bucket.lambda_packages.bucket
-  s3_key    = var.lambda_config.s3_key
+  s3_key    = var.s3_key
   handler   = var.lambda_config.handler
   runtime   = var.lambda_config.runtime
 
