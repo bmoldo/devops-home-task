@@ -589,11 +589,11 @@ jobs:
         env:
           DATABASE_URL: postgresql://${{ steps.get-db-creds.outputs.DB_USER }}:${{ steps.get-db-creds.outputs.DB_PASS }}@localhost:5432/${{ steps.get-db-creds.outputs.DB_NAME }}_test
           ENVIRONMENT: ${{ needs.determine-environment.outputs.environment }}
-          AWS_DEFAULT_REGION: us-east-1
+          AWS_DEFAULT_REGION: eu-west-1
           S3_BUCKET_NAME: user-api-${{ needs.determine-environment.outputs.environment }}
           PYTEST_CURRENT_TEST: "True"
           AWS_LAMBDA_FUNCTION_NAME: user-api-${{ needs.determine-environment.outputs.environment }}
-          AWS_REGION: us-east-1
+          AWS_REGION: eu-west-1
           AWS_EXECUTION_ENV: AWS_Lambda_python3.11
         run: pytest --cov=app tests/test_lambda.py -v
 
