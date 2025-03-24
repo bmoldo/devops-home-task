@@ -99,10 +99,10 @@ resource "aws_s3_bucket_public_access_block" "lambda_zip_block_public_access" {
 
 # User API bucket
 resource "aws_s3_bucket" "user_api" {
-  bucket = "user-api-${var.environment}"
+  bucket = var.bucket_name
   
   tags = {
-    Name        = "user-api-${var.environment}"
+    Name        = var.bucket_name
     Environment = var.environment
     ManagedBy   = "Terraform"
   }

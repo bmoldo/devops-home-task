@@ -1,185 +1,66 @@
-provider "aws" {
-  region = var.aws_region
+environment = "dev"
+aws_region  = "us-east-1"
+account_id  = "070503547773" # Replace with your actual AWS account ID
+
+vpc_config = {
+  cidr_block = "10.0.0.0/16"
+  azs        = ["us-east-1a", "us-east-1b", "us-east-1c"]
+  public_subnets = [
+    { cidr = "10.0.0.0/24", az = "us-east-1a" },
+    { cidr = "10.0.1.0/24", az = "us-east-1b" },
+    { cidr = "10.0.2.0/24", az = "us-east-1c" }
+  ]
+  private_subnets = [
+    { cidr = "10.0.10.0/24", az = "us-east-1a" },
+    { cidr = "10.0.11.0/24", az = "us-east-1b" },
+    { cidr = "10.0.12.0/24", az = "us-east-1c" }
+  ]
+  enable_nat_gateway = true
+  single_nat_gateway = true
 }
 
-locals {
-  env_suffix = var.environment
-  common_tags = {
-    Environment = var.environment
-    Project     = "user-api"
-    ManagedBy   = "Terraform"
-  }
+rds_config = {
+  identifier              = "user-api"
+  engine                  = "postgres"
+  engine_version          = "14"
+  instance_class          = "db.t3.micro" # Minimum viable for dev
+  allocated_storage       = 20            # Minimum recommended storage
+  max_allocated_storage   = 100           # Allow autoscaling
+  username                = "postgres"
+  database_name           = "users_test"
+  backup_retention_period = 7
+  deletion_protection     = false
+  multi_az                = false # Set to true for production
+  skip_final_snapshot     = true  # Set to false for production
+  maintenance_window      = "Mon:00:00-Mon:03:00"
+  backup_window           = "03:00-06:00"
 }
 
-# VPC for the application
-module "vpc" {
-  source = "../../modules/vpc"
-
-  vpc_config = {
-    cidr_block         = var.vpc_config.cidr_block
-    azs                = var.vpc_config.azs
-    public_subnets     = var.vpc_config.public_subnets
-    private_subnets    = var.vpc_config.private_subnets
-    enable_nat_gateway = var.vpc_config.enable_nat_gateway
-    single_nat_gateway = var.vpc_config.single_nat_gateway
-  }
-
-  environment = var.environment
-}
-
-# RDS Database
-module "rds" {
-  source = "../../modules/rds"
-
-  identifier              = "${var.rds_config.identifier}-${local.env_suffix}"
-  engine                  = var.rds_config.engine
-  engine_version          = var.rds_config.engine_version
-  instance_class          = var.rds_config.instance_class
-  allocated_storage       = var.rds_config.allocated_storage
-  max_allocated_storage   = var.rds_config.max_allocated_storage
-  username                = var.rds_config.username
-  database_name           = var.rds_config.database_name
-  backup_retention_period = var.rds_config.backup_retention_period
-  deletion_protection     = var.rds_config.deletion_protection
-  multi_az                = var.rds_config.multi_az
-  skip_final_snapshot     = var.rds_config.skip_final_snapshot
-  maintenance_window      = var.rds_config.maintenance_window
-  backup_window           = var.rds_config.backup_window
-
-  subnet_ids             = module.vpc.private_subnet_ids
-  vpc_security_group_ids = [module.vpc.default_security_group_id]
-
-  environment = var.environment
-}
-
-# S3 Buckets (terraform state, lambda zip, user api)
-module "s3" {
-  source = "../../modules/s3"
-
-  versioning_enabled = var.s3_config.versioning_enabled
-  lifecycle_rules    = var.s3_config.lifecycle_rules
-  environment        = var.environment
-}
-
-# Create IAM role for Lambda
-resource "aws_iam_role" "lambda_execution_role" {
-  name = "lambda-execution-role-${var.environment}"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17",
-    Statement = [{
-      Action = "sts:AssumeRole",
-      Effect = "Allow",
-      Principal = {
-        Service = "lambda.amazonaws.com"
-      }
-    }]
-  })
-
-  tags = local.common_tags
-}
-
-# Attach policies to the Lambda execution role
-resource "aws_iam_role_policy_attachment" "lambda_basic" {
-  role       = aws_iam_role.lambda_execution_role.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
-}
-
-resource "aws_iam_role_policy_attachment" "lambda_vpc_access" {
-  role       = aws_iam_role.lambda_execution_role.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
-}
-
-# S3 access for Lambda
-resource "aws_iam_policy" "lambda_s3_access" {
-  name        = "lambda-s3-access-${var.environment}"
-  description = "Allow Lambda to access S3 bucket"
-
-  policy = jsonencode({
-    Version = "2012-10-17",
-    Statement = [
-      {
-        Action = [
-          "s3:GetObject",
-          "s3:PutObject",
-          "s3:ListBucket",
-          "s3:DeleteObject"
-        ],
-        Effect = "Allow",
-        Resource = [
-          "${module.s3.user_api_bucket_arn}",
-          "${module.s3.user_api_bucket_arn}/*",
-          "${module.s3.lambda_zip_bucket_arn}",
-          "${module.s3.lambda_zip_bucket_arn}/*"
-        ]
-      }
-    ]
-  })
-}
-
-resource "aws_iam_role_policy_attachment" "lambda_s3_access" {
-  role       = aws_iam_role.lambda_execution_role.name
-  policy_arn = aws_iam_policy.lambda_s3_access.arn
-}
-
-# Lambda CloudWatch Logs
-resource "aws_cloudwatch_log_group" "lambda_logs" {
-  name              = "/aws/lambda/${var.lambda_config.function_name}-${local.env_suffix}"
-  retention_in_days = var.lambda_config.log_retention_in_days
-  tags              = local.common_tags
-}
-
-# Lambda function for API
-module "lambda" {
-  source = "../../modules/lambda"
-
-  function_name      = "${var.lambda_config.function_name}-${local.env_suffix}"
-  execution_role_arn = aws_iam_role.lambda_execution_role.arn
-
-  # Use the zip deployment instead of Docker image
-  lambda_zip_path = var.lambda_zip_path # Will default to "lambda_deployment_package.zip" if not provided
-  handler         = var.lambda_config.handler
-  runtime         = var.lambda_config.runtime
-
-  memory_size = var.lambda_config.memory_size
-  timeout     = var.lambda_config.timeout
-
-  vpc_config = {
-    subnet_ids         = module.vpc.private_subnet_ids
-    security_group_ids = [module.vpc.lambda_security_group_id]
-  }
-
+lambda_config = {
+  function_name         = "user-api"
+  runtime               = "python3.11"
+  memory_size           = 512
+  timeout               = 30
+  log_retention_in_days = 14
+  handler               = "main.lambda_handler"
   environment_variables = {
-    for k, v in merge(var.lambda_config.environment_variables, {
-      DATABASE_URL      = "postgresql://${var.rds_config.username}:${random_password.db_password.result}@${module.rds.endpoint}/${var.rds_config.database_name}"
-      S3_BUCKET_NAME    = module.s3.user_api_bucket_name
-      LAMBDA_ZIP_BUCKET = module.s3.lambda_zip_bucket_name
-    }) : k => v if !contains(["AWS_REGION", "AWS_LAMBDA_FUNCTION_NAME"], k)
+    ENVIRONMENT              = "dev"
+    AWS_LAMBDA_FUNCTION_NAME = "user-api"
+    AWS_REGION               = "us-east-1"
+    AWS_EXECUTION_ENV        = "AWS_Lambda_python3.11"
+    API_GATEWAY_BASE_PATH    = "/"
   }
-
-  environment = var.environment
 }
 
-# Random password for database if needed
-resource "random_password" "db_password" {
-  length           = 16
-  special          = true
-  override_special = "!#$%&*()-_=+[]{}<>:?"
-}
-
-# API Gateway
-module "api_gateway" {
-  source = "../../modules/api_gateway"
-
-  name          = "${var.api_gateway_config.name}-${local.env_suffix}"
-  endpoint_type = var.api_gateway_config.endpoint_type
-  stage_name    = var.api_gateway_config.stage_name
-  description   = var.api_gateway_config.description
-
-  lambda_function_name = module.lambda.function_name
-  lambda_function_arn  = module.lambda.function_arn
-
-  environment = var.environment
-
-  depends_on = [module.lambda]
+s3_config = {
+  bucket_name        = "user-queries-dev" # Original bucket name from requirements
+  versioning_enabled = true
+  lifecycle_rules = [
+    {
+      id              = "expire-old-queries"
+      enabled         = true
+      prefix          = ""
+      expiration_days = 90
+    }
+  ]
 }
