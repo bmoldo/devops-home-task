@@ -74,7 +74,7 @@ jobs:
         run: |
           # Default to dev
           ENVIRONMENT="dev"
-          TFVARS_FILE="../../config/dev.tfvars"
+          TFVARS_FILE="../../config/${ENVIRONMENT}.tfvars"
           
           # If workflow_dispatch, use the input
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
@@ -143,24 +143,6 @@ jobs:
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: 1.5.0
-
-      - name: Prepare S3 state bucket
-        id: prepare_state_bucket
-        run: |
-          ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
-          BUCKET_NAME="terraform-state-${{ github.repository_owner }}-${{ github.event.repository.name }}-${ENVIRONMENT}"
-          
-          # Check if bucket exists
-          if ! aws s3api head-bucket --bucket $BUCKET_NAME 2>/dev/null; then
-            echo "Creating Terraform state bucket: $BUCKET_NAME"
-            aws s3api create-bucket --bucket $BUCKET_NAME --region us-east-1
-            aws s3api put-bucket-versioning --bucket $BUCKET_NAME --versioning-configuration Status=Enabled
-            aws s3api put-bucket-encryption --bucket $BUCKET_NAME --server-side-encryption-configuration '{"Rules": [{"ApplyServerSideEncryptionByDefault": {"SSEAlgorithm": "AES256"}}]}'
-          else
-            echo "Using existing Terraform state bucket: $BUCKET_NAME"
-          fi
-          
-          echo "state_bucket=$BUCKET_NAME" >> $GITHUB_OUTPUT
 
       - name: Create valid placeholder Lambda ZIP
         run: |
@@ -351,14 +333,12 @@ jobs:
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
           TIMESTAMP=$(date +%Y%m%d%H%M%S)
           S3_KEY="lambda/lambda_deployment_package_${TIMESTAMP}.zip"
-          S3_BUCKET="terraform-state-${{ github.repository_owner }}-${{ github.event.repository.name }}-${ENVIRONMENT}"
+          S3_BUCKET="lambda-zip-${ENVIRONMENT}"
           
-          # Ensure bucket exists
+          # Check if bucket exists (should be created by Terraform)
           if ! aws s3api head-bucket --bucket $S3_BUCKET 2>/dev/null; then
-            echo "Creating S3 bucket for Lambda packages and Terraform state"
-            aws s3api create-bucket --bucket $S3_BUCKET --region us-east-1
-            aws s3api put-bucket-versioning --bucket $S3_BUCKET --versioning-configuration Status=Enabled
-            aws s3api put-bucket-encryption --bucket $S3_BUCKET --server-side-encryption-configuration '{"Rules": [{"ApplyServerSideEncryptionByDefault": {"SSEAlgorithm": "AES256"}}]}'
+            echo "Error: Lambda zip bucket doesn't exist. Infrastructure may not be deployed yet."
+            exit 1
           fi
           
           # Upload to S3
@@ -401,7 +381,7 @@ jobs:
       - name: Create Lambda S3 variables file
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
-          S3_BUCKET="terraform-state-${{ github.repository_owner }}-${{ github.event.repository.name }}-${ENVIRONMENT}"
+          S3_BUCKET="lambda-zip-${ENVIRONMENT}"
           S3_KEY="${{ needs.build-lambda-package.outputs.s3_lambda_key }}"
           
           cat > terraform/environments/$ENVIRONMENT/lambda_vars.auto.tfvars <<EOF
@@ -432,7 +412,7 @@ jobs:
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
           TFVARS_FILE="${{ needs.determine-environment.outputs.tfvars_file }}"
-          S3_BUCKET="terraform-state-${{ github.repository_owner }}-${{ github.event.repository.name }}-${ENVIRONMENT}"
+          S3_BUCKET="lambda-zip-${ENVIRONMENT}"
           S3_KEY="${{ needs.build-lambda-package.outputs.s3_lambda_key }}"
           
           cd terraform/environments/$ENVIRONMENT
@@ -445,7 +425,7 @@ jobs:
 
   test-app:
       name: Test Application
-      needs: [terraform-with-lambda]
+      needs: [determine-environment, terraform-apply, update-lambda]
       if: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.run_tests == 'true' && github.event.inputs.destroy_infrastructure == 'false') || (github.event_name != 'workflow_dispatch' && needs.changes.outputs.app == 'true') }}
       runs-on: ubuntu-latest
       services:
@@ -511,7 +491,7 @@ jobs:
             DATABASE_URL: postgresql://${{ steps.get-db-creds.outputs.DB_USER }}:${{ steps.get-db-creds.outputs.DB_PASS }}@${{ steps.get-db-creds.outputs.DB_HOST }}:${{ steps.get-db-creds.outputs.DB_PORT }}/${{ steps.get-db-creds.outputs.DB_NAME }}_test
             ENVIRONMENT: dev
             AWS_DEFAULT_REGION: us-east-1
-            S3_BUCKET_NAME: user-queries-dev
+            S3_BUCKET_NAME: user-api-dev
             PYTEST_CURRENT_TEST: "True"
             AWS_LAMBDA_FUNCTION_NAME: user-api-dev
             AWS_REGION: us-east-1
