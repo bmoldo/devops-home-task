@@ -17,7 +17,7 @@ def lambda_context():
     return SimpleNamespace(
         function_name="test-function",
         memory_limit_in_mb=128,
-        invoked_function_arn="arn:aws:lambda:eu-west-1:809313241:function:test-function",
+        invoked_function_arn="arn:aws:lambda:us-east-1:809313241:function:test-function",
         aws_request_id="52fdfc07-2182-154f-163f-5f0f9a621d72"
     )
 
