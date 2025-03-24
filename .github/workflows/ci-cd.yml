@@ -102,7 +102,57 @@ jobs:
           role-to-assume: arn:aws:iam::070503547773:role/GitHubActionsRole
           aws-region: us-east-1
 
+      - name: Check for S3 state bucket
+        id: check_s3_bucket
+        run: |
+          # Get the environment
+          ENVIRONMENT="${{ steps.set-env.outputs.environment }}"
+          
+          # Create a standardized bucket name based on environment and account ID
+          ACCOUNT_ID="070503547773"
+          BUCKET_NAME="terraform-state-${ENVIRONMENT}-${ACCOUNT_ID}"
+          
+          echo "Using bucket name: $BUCKET_NAME"
+          
+          # Check if bucket exists
+          BUCKET_EXISTS=$(aws s3api head-bucket --bucket $BUCKET_NAME 2>&1 || echo "not exists")
+          
+          if [[ $BUCKET_EXISTS == *"not exists"* ]]; then
+            echo "create_bucket=true" >> $GITHUB_OUTPUT
+            echo "bucket_name=$BUCKET_NAME" >> $GITHUB_OUTPUT
+            echo "Bucket does not exist, will create: $BUCKET_NAME"
+          else
+            echo "create_bucket=false" >> $GITHUB_OUTPUT
+            echo "bucket_name=$BUCKET_NAME" >> $GITHUB_OUTPUT
+            echo "Bucket exists: $BUCKET_NAME"
+          fi
 
+      - name: Create S3 state bucket if not exists
+        if: steps.check_s3_bucket.outputs.create_bucket == 'true'
+        run: |
+          BUCKET_NAME="${{ steps.check_s3_bucket.outputs.bucket_name }}"
+          echo "Creating S3 bucket: $BUCKET_NAME"
+          
+          # Create the bucket
+          aws s3api create-bucket --bucket $BUCKET_NAME --region us-east-1
+          
+          # Enable versioning
+          aws s3api put-bucket-versioning --bucket $BUCKET_NAME --versioning-configuration Status=Enabled
+          
+          # Enable encryption
+          aws s3api put-bucket-encryption --bucket $BUCKET_NAME --server-side-encryption-configuration '{"Rules": [{"ApplyServerSideEncryptionByDefault": {"SSEAlgorithm": "AES256"}}]}'
+          
+          # Create DynamoDB table for state locking with consistent naming
+          ENVIRONMENT="${{ steps.set-env.outputs.environment }}"
+          TABLE_NAME="terraform-locks-${ENVIRONMENT}"
+          
+          echo "Creating DynamoDB table: $TABLE_NAME"
+          aws dynamodb create-table \
+            --table-name $TABLE_NAME \
+            --key-schema AttributeName=LockID,KeyType=HASH \
+            --attribute-definitions AttributeName=LockID,AttributeType=S \
+            --billing-mode PAY_PER_REQUEST \
+            --region us-east-1
 
   changes:
     name: Detect Changes
@@ -146,7 +196,7 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v2
         with:
           role-to-assume: arn:aws:iam::070503547773:role/GitHubActionsRole
-          aws-region: eu-west-1
+          aws-region: us-east-1
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
@@ -162,44 +212,10 @@ jobs:
           zip -r ../lambda_deployment_package.zip .
           cd ..
 
-      - name: Check for S3 state bucket
-        id: check_s3_bucket
-        run: |
-          # Create a sanitized name for the bucket
-          REPO_NAME=$(echo "${{ github.event.repository.name }}" | tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]-')
-          OWNER_NAME=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]-')
-          
-          # Ensure bucket name is valid and not empty
-          BUCKET_NAME="terraform-state-${OWNER_NAME}-${REPO_NAME}"
-          
-          # Validate bucket name is not empty
-          if [ -z "$BUCKET_NAME" ]; then
-            BUCKET_NAME="terraform-state-default-$(date +%s)"
-            echo "Warning: Generated empty bucket name, using default: $BUCKET_NAME"
-          fi
-          
-          echo "Using bucket name: $BUCKET_NAME"
-          BUCKET_EXISTS=$(aws s3api head-bucket --bucket $BUCKET_NAME 2>&1 || echo "not exists")
-          
-          if [[ $BUCKET_EXISTS == *"not exists"* ]]; then
-            echo "create_bucket=true" >> $GITHUB_OUTPUT
-            echo "bucket_name=$BUCKET_NAME" >> $GITHUB_OUTPUT
-          else
-            echo "create_bucket=false" >> $GITHUB_OUTPUT
-            echo "bucket_name=$BUCKET_NAME" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Create S3 state bucket if not exists
-        if: steps.check_s3_bucket.outputs.create_bucket == 'true'
-        run: |
-          aws s3api create-bucket --bucket ${{ steps.check_s3_bucket.outputs.bucket_name }} --region us-east-1
-          aws s3api put-bucket-versioning --bucket ${{ steps.check_s3_bucket.outputs.bucket_name }} --versioning-configuration Status=Enabled
-          aws s3api put-bucket-encryption --bucket ${{ steps.check_s3_bucket.outputs.bucket_name }} --server-side-encryption-configuration '{"Rules": [{"ApplyServerSideEncryptionByDefault": {"SSEAlgorithm": "AES256"}}]}'
-
       - name: Terraform Init
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
-          BUCKET_NAME="${{ needs.determine-environment.outputs.tf_state_bucket }}"
+          BUCKET_NAME="${{ needs.determine-environment.outputs.state_bucket_name }}"
           
           echo "Using Terraform state bucket: $BUCKET_NAME"
           cd terraform/environments/$ENVIRONMENT
@@ -207,7 +223,8 @@ jobs:
           # Initialize with backend configuration for S3
           terraform init -backend-config="bucket=$BUCKET_NAME" \
                         -backend-config="region=us-east-1" \
-                        -backend-config="key=terraform/$ENVIRONMENT/terraform.tfstate"
+                        -backend-config="key=terraform/$ENVIRONMENT/terraform.tfstate" \
+                        -backend-config="dynamodb_table=terraform-locks-$ENVIRONMENT"
 
       - name: Terraform Format
         run: |
@@ -299,7 +316,7 @@ jobs:
       - name: Terraform Init
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
-          BUCKET_NAME="${{ needs.determine-environment.outputs.tf_state_bucket }}"
+          BUCKET_NAME="${{ needs.determine-environment.outputs.state_bucket_name }}"
           
           echo "Using Terraform state bucket: $BUCKET_NAME"
           cd terraform/environments/$ENVIRONMENT
@@ -307,7 +324,8 @@ jobs:
           # Initialize with backend configuration for S3
           terraform init -backend-config="bucket=$BUCKET_NAME" \
                         -backend-config="region=us-east-1" \
-                        -backend-config="key=terraform/$ENVIRONMENT/terraform.tfstate"
+                        -backend-config="key=terraform/$ENVIRONMENT/terraform.tfstate" \
+                        -backend-config="dynamodb_table=terraform-locks-$ENVIRONMENT"
 
       - name: Download Plan
         uses: actions/download-artifact@v4
@@ -464,7 +482,7 @@ jobs:
       - name: Terraform Init
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
-          BUCKET_NAME="${{ needs.determine-environment.outputs.tf_state_bucket }}"
+          BUCKET_NAME="${{ needs.determine-environment.outputs.state_bucket_name }}"
           
           echo "Using Terraform state bucket: $BUCKET_NAME"
           cd terraform/environments/$ENVIRONMENT
@@ -472,7 +490,8 @@ jobs:
           # Initialize with backend configuration for S3
           terraform init -backend-config="bucket=$BUCKET_NAME" \
                         -backend-config="region=us-east-1" \
-                        -backend-config="key=terraform/$ENVIRONMENT/terraform.tfstate"
+                        -backend-config="key=terraform/$ENVIRONMENT/terraform.tfstate" \
+                        -backend-config="dynamodb_table=terraform-locks-$ENVIRONMENT"
 
       - name: Terraform Apply with Lambda package
         run: |
@@ -491,86 +510,91 @@ jobs:
             -var="lambda_zip_path=../../../lambda_deployment_package.zip"
 
   test-app:
-      name: Test Application
-      needs: [determine-environment, terraform-apply, update-lambda]
-      if: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.run_tests == 'true' && github.event.inputs.destroy_infrastructure == 'false') || (github.event_name != 'workflow_dispatch' && needs.changes.outputs.app == 'true') }}
-      runs-on: ubuntu-latest
-      services:
-        postgres:
-          image: postgres:14
-          env:
-            POSTGRES_PASSWORD: postgres
-            POSTGRES_USER: postgres
-            POSTGRES_DB: users
-          ports:
-            - 5432:5432
-          options: >-
-            --health-cmd pg_isready
-            --health-interval 10s
-            --health-timeout 5s
-            --health-retries 5
-      steps:
-        - name: Checkout code
-          uses: actions/checkout@v3
+    name: Test Application
+    needs: [determine-environment, terraform-apply, update-lambda]
+    if: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.run_tests == 'true' && github.event.inputs.destroy_infrastructure == 'false') || (github.event_name != 'workflow_dispatch' && needs.changes.outputs.app == 'true') }}
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:14
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_DB: users
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
 
-        - name: Configure AWS credentials
-          uses: aws-actions/configure-aws-credentials@v2
-          with:
-            role-to-assume: arn:aws:iam::070503547773:role/GitHubActionsRole
-            aws-region: us-east-1
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: arn:aws:iam::070503547773:role/GitHubActionsRole
+          aws-region: us-east-1
 
-        - name: Get database credentials from Secrets Manager
-          id: get-db-creds
-          run: |
-            SECRET_VALUE=$(aws secretsmanager get-secret-value --secret-id arn:aws:secretsmanager:us-east-1:070503547773:secret:user-api-db-dev-credentials-fIuI0q --query SecretString --output text)
-            echo "DB_HOST=$(echo $SECRET_VALUE | jq -r '.host')" >> $GITHUB_OUTPUT
-            echo "DB_USER=$(echo $SECRET_VALUE | jq -r '.username')" >> $GITHUB_OUTPUT
-            echo "DB_PASS=$(echo $SECRET_VALUE | jq -r '.password')" >> $GITHUB_OUTPUT
-            echo "DB_NAME=$(echo $SECRET_VALUE | jq -r '.dbname')" >> $GITHUB_OUTPUT
-            echo "DB_PORT=$(echo $SECRET_VALUE | jq -r '.port')" >> $GITHUB_OUTPUT
+      - name: Get database credentials from Secrets Manager
+        id: get-db-creds
+        run: |
+          # Get the environment
+          ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
+          SECRET_ARN="arn:aws:secretsmanager:us-east-1:070503547773:secret:user-api-${ENVIRONMENT}-db-credentials-fIuI0q"
+          
+          # Get and parse secret value
+          SECRET_VALUE=$(aws secretsmanager get-secret-value --secret-id $SECRET_ARN --query SecretString --output text)
+          echo "DB_HOST=$(echo $SECRET_VALUE | jq -r '.host')" >> $GITHUB_OUTPUT
+          echo "DB_USER=$(echo $SECRET_VALUE | jq -r '.username')" >> $GITHUB_OUTPUT
+          echo "DB_PASS=$(echo $SECRET_VALUE | jq -r '.password')" >> $GITHUB_OUTPUT
+          echo "DB_NAME=$(echo $SECRET_VALUE | jq -r '.dbname')" >> $GITHUB_OUTPUT
+          echo "DB_PORT=$(echo $SECRET_VALUE | jq -r '.port')" >> $GITHUB_OUTPUT
 
-        - name: Setup Python
-          uses: actions/setup-python@v4
-          with:
-            python-version: '3.11'
-            cache: 'pip'
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          cache: 'pip'
 
-        - name: Install dependencies
-          run: |
-            python -m pip install --upgrade pip
-            pip install -r requirements.txt
-            pip install pytest pytest-cov jq
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-cov jq
 
-        - name: Update init-db.sh permissions
-          run: chmod +x init-db.sh
+      - name: Update init-db.sh permissions
+        run: chmod +x init-db.sh
 
-        - name: Initialize test database
-          env:
-            POSTGRES_USER: ${{ steps.get-db-creds.outputs.DB_USER }}
-            POSTGRES_DB: ${{ steps.get-db-creds.outputs.DB_NAME }}
-            PGPASSWORD: ${{ steps.get-db-creds.outputs.DB_PASS }}
-            PGHOST: localhost
-            PGPORT: 5432
-          run: ./init-db.sh
+      - name: Initialize test database
+        env:
+          POSTGRES_USER: ${{ steps.get-db-creds.outputs.DB_USER }}
+          POSTGRES_DB: ${{ steps.get-db-creds.outputs.DB_NAME }}
+          PGPASSWORD: ${{ steps.get-db-creds.outputs.DB_PASS }}
+          PGHOST: localhost
+          PGPORT: 5432
+        run: ./init-db.sh
 
-        - name: Run Lambda tests
-          env:
-            DATABASE_URL: postgresql://${{ steps.get-db-creds.outputs.DB_USER }}:${{ steps.get-db-creds.outputs.DB_PASS }}@${{ steps.get-db-creds.outputs.DB_HOST }}:${{ steps.get-db-creds.outputs.DB_PORT }}/${{ steps.get-db-creds.outputs.DB_NAME }}_test
-            ENVIRONMENT: dev
-            AWS_DEFAULT_REGION: us-east-1
-            S3_BUCKET_NAME: user-api-dev
-            PYTEST_CURRENT_TEST: "True"
-            AWS_LAMBDA_FUNCTION_NAME: user-api-dev
-            AWS_REGION: us-east-1
-            AWS_EXECUTION_ENV: AWS_Lambda_python3.11
-          run: pytest --cov=app tests/test_lambda.py -v
+      - name: Run Lambda tests
+        env:
+          DATABASE_URL: postgresql://${{ steps.get-db-creds.outputs.DB_USER }}:${{ steps.get-db-creds.outputs.DB_PASS }}@localhost:5432/${{ steps.get-db-creds.outputs.DB_NAME }}_test
+          ENVIRONMENT: ${{ needs.determine-environment.outputs.environment }}
+          AWS_DEFAULT_REGION: us-east-1
+          S3_BUCKET_NAME: user-api-${{ needs.determine-environment.outputs.environment }}
+          PYTEST_CURRENT_TEST: "True"
+          AWS_LAMBDA_FUNCTION_NAME: user-api-${{ needs.determine-environment.outputs.environment }}
+          AWS_REGION: us-east-1
+          AWS_EXECUTION_ENV: AWS_Lambda_python3.11
+        run: pytest --cov=app tests/test_lambda.py -v
 
-        - name: Upload test coverage report
-          uses: actions/upload-artifact@v4
-          with:
-            name: test-coverage-report
-            path: .coverage
-            retention-days: 5
+      - name: Upload test coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-coverage-report
+          path: .coverage
+          retention-days: 5
 
   terraform-destroy:
     name: Terraform Destroy Infrastructure
@@ -605,7 +629,7 @@ jobs:
       - name: Terraform Init
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
-          BUCKET_NAME="${{ needs.determine-environment.outputs.tf_state_bucket }}"
+          BUCKET_NAME="${{ needs.determine-environment.outputs.state_bucket_name }}"
           
           echo "Using Terraform state bucket: $BUCKET_NAME"
           cd terraform/environments/$ENVIRONMENT
@@ -613,7 +637,8 @@ jobs:
           # Initialize with backend configuration for S3
           terraform init -backend-config="bucket=$BUCKET_NAME" \
                         -backend-config="region=us-east-1" \
-                        -backend-config="key=terraform/$ENVIRONMENT/terraform.tfstate" -backend-config="bucket=${{ needs.determine-environment.outputs.state_bucket_name }}"
+                        -backend-config="key=terraform/$ENVIRONMENT/terraform.tfstate" \
+                        -backend-config="dynamodb_table=terraform-locks-$ENVIRONMENT"
 
       - name: Terraform Destroy Plan
         id: destroy-plan
