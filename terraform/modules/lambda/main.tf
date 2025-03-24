@@ -36,6 +36,6 @@ resource "aws_lambda_function" "function" {
   }, var.tags)
   
   lifecycle {
-    ignore_changes = [filename, source_code_hash]
+    ignore_changes = var.use_s3_source ? [] : [filename, source_code_hash]
   }
 }
