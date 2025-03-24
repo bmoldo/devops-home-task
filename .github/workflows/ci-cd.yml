@@ -153,6 +153,51 @@ jobs:
           zip -r ../lambda_deployment_package.zip .
           cd ..
 
+      - name: Prepare S3 state bucket
+        run: |
+          ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
+          BUCKET_NAME="terraform-state-${ENVIRONMENT}"
+          
+          # Check if bucket exists
+          if ! aws s3api head-bucket --bucket $BUCKET_NAME 2>/dev/null; then
+            echo "Creating Terraform state bucket: $BUCKET_NAME"
+            aws s3api create-bucket --bucket $BUCKET_NAME --region eu-west-1 --create-bucket-configuration LocationConstraint=eu-west-1
+            aws s3api put-bucket-versioning --bucket $BUCKET_NAME --versioning-configuration Status=Enabled
+            aws s3api put-bucket-encryption --bucket $BUCKET_NAME --server-side-encryption-configuration '{"Rules": [{"ApplyServerSideEncryptionByDefault": {"SSEAlgorithm": "AES256"}}]}'
+          else
+            echo "Using existing Terraform state bucket: $BUCKET_NAME"
+          fi
+
+      - name: Prepare S3 state bucket
+        run: |
+          ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
+          BUCKET_NAME="terraform-state-${ENVIRONMENT}"
+          
+          # Check if bucket exists
+          if ! aws s3api head-bucket --bucket $BUCKET_NAME 2>/dev/null; then
+            echo "Creating Terraform state bucket: $BUCKET_NAME"
+            aws s3api create-bucket --bucket $BUCKET_NAME --region eu-west-1 --create-bucket-configuration LocationConstraint=eu-west-1
+            aws s3api put-bucket-versioning --bucket $BUCKET_NAME --versioning-configuration Status=Enabled
+            aws s3api put-bucket-encryption --bucket $BUCKET_NAME --server-side-encryption-configuration '{"Rules": [{"ApplyServerSideEncryptionByDefault": {"SSEAlgorithm": "AES256"}}]}'
+          else
+            echo "Using existing Terraform state bucket: $BUCKET_NAME"
+          fi
+
+      - name: Prepare S3 state bucket
+        run: |
+          ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
+          BUCKET_NAME="terraform-state-${ENVIRONMENT}"
+          
+          # Check if bucket exists
+          if ! aws s3api head-bucket --bucket $BUCKET_NAME 2>/dev/null; then
+            echo "Creating Terraform state bucket: $BUCKET_NAME"
+            aws s3api create-bucket --bucket $BUCKET_NAME --region eu-west-1 --create-bucket-configuration LocationConstraint=eu-west-1
+            aws s3api put-bucket-versioning --bucket $BUCKET_NAME --versioning-configuration Status=Enabled
+            aws s3api put-bucket-encryption --bucket $BUCKET_NAME --server-side-encryption-configuration '{"Rules": [{"ApplyServerSideEncryptionByDefault": {"SSEAlgorithm": "AES256"}}]}'
+          else
+            echo "Using existing Terraform state bucket: $BUCKET_NAME"
+          fi
+
       - name: Terraform Init
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
