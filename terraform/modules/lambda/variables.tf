@@ -59,19 +59,6 @@ variable "runtime" {
   default     = "python3.11"
 }
 
-variable "lambda_zip_path" {
-  description = "Path to the Lambda deployment package ZIP file"
-  type        = string
-  default     = "lambda_deployment_package.zip"
-}
-
-# New variables for S3-based deployment
-variable "use_s3_source" {
-  description = "Whether to use S3 as the source for the Lambda code"
-  type        = bool
-  default     = false
-}
-
 variable "s3_bucket" {
   description = "S3 bucket containing the Lambda deployment package"
   type        = string
