@@ -172,7 +172,7 @@ jobs:
       - name: Prepare S3 state bucket
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
-          BUCKET_NAME="terraform-state-${ENVIRONMENT}"
+          BUCKET_NAME="terraform-state-${ENVIRONMENT}-${ACCOUNT_ID}"
           
           # Check if bucket exists
           if ! aws s3api head-bucket --bucket $BUCKET_NAME 2>/dev/null; then
