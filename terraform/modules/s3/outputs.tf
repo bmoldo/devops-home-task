@@ -22,3 +22,37 @@ output "bucket_regional_domain_name" {
   description = "Regional domain name of the S3 bucket"
   value       = aws_s3_bucket.bucket.bucket_regional_domain_name
 }
+
+
+# User API bucket outputs
+output "user_api_bucket_name" {
+  description = "The name of the User API S3 bucket"
+  value       = aws_s3_bucket.user_api.id
+}
+
+output "user_api_bucket_arn" {
+  description = "The ARN of the User API S3 bucket"
+  value       = aws_s3_bucket.user_api.arn
+}
+
+# Lambda zip bucket outputs
+output "lambda_zip_bucket_name" {
+  description = "The name of the Lambda zip S3 bucket"
+  value       = aws_s3_bucket.lambda_zip.id
+}
+
+output "lambda_zip_bucket_arn" {
+  description = "The ARN of the Lambda zip S3 bucket"
+  value       = aws_s3_bucket.lambda_zip.arn
+}
+
+# Terraform state bucket outputs
+output "terraform_state_bucket_name" {
+  description = "The name of the Terraform state S3 bucket"
+  value       = aws_s3_bucket.terraform_state.id
+}
+
+output "terraform_state_bucket_arn" {
+  description = "The ARN of the Terraform state S3 bucket"
+  value       = aws_s3_bucket.terraform_state.arn
+}
