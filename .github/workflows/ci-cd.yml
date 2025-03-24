@@ -199,13 +199,7 @@ jobs:
       - name: Terraform Init
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
-          BUCKET_NAME="${{ needs.determine-environment.outputs.state_bucket_name }}"
-          
-          # Verify we have a bucket name before proceeding
-          if [ -z "$BUCKET_NAME" ]; then
-            echo "Error: S3 bucket name is empty! Cannot initialize Terraform."
-            exit 1
-          fi
+          BUCKET_NAME="${{ needs.determine-environment.outputs.tf_state_bucket }}"
           
           echo "Using Terraform state bucket: $BUCKET_NAME"
           cd terraform/environments/$ENVIRONMENT
@@ -213,7 +207,7 @@ jobs:
           # Initialize with backend configuration for S3
           terraform init -backend-config="bucket=$BUCKET_NAME" \
                         -backend-config="region=us-east-1" \
-                        -backend-config="key=${ENVIRONMENT}/terraform.tfstate"
+                        -backend-config="key=terraform/$ENVIRONMENT/terraform.tfstate"
 
       - name: Terraform Format
         run: |
@@ -305,13 +299,7 @@ jobs:
       - name: Terraform Init
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
-          BUCKET_NAME="${{ needs.determine-environment.outputs.state_bucket_name }}"
-          
-          # Verify we have a bucket name before proceeding
-          if [ -z "$BUCKET_NAME" ]; then
-            echo "Error: S3 bucket name is empty! Cannot initialize Terraform."
-            exit 1
-          fi
+          BUCKET_NAME="${{ needs.determine-environment.outputs.tf_state_bucket }}"
           
           echo "Using Terraform state bucket: $BUCKET_NAME"
           cd terraform/environments/$ENVIRONMENT
@@ -319,7 +307,7 @@ jobs:
           # Initialize with backend configuration for S3
           terraform init -backend-config="bucket=$BUCKET_NAME" \
                         -backend-config="region=us-east-1" \
-                        -backend-config="key=${ENVIRONMENT}/terraform.tfstate"
+                        -backend-config="key=terraform/$ENVIRONMENT/terraform.tfstate"
 
       - name: Download Plan
         uses: actions/download-artifact@v4
@@ -476,13 +464,7 @@ jobs:
       - name: Terraform Init
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
-          BUCKET_NAME="${{ needs.determine-environment.outputs.state_bucket_name }}"
-          
-          # Verify we have a bucket name before proceeding
-          if [ -z "$BUCKET_NAME" ]; then
-            echo "Error: S3 bucket name is empty! Cannot initialize Terraform."
-            exit 1
-          fi
+          BUCKET_NAME="${{ needs.determine-environment.outputs.tf_state_bucket }}"
           
           echo "Using Terraform state bucket: $BUCKET_NAME"
           cd terraform/environments/$ENVIRONMENT
@@ -490,7 +472,7 @@ jobs:
           # Initialize with backend configuration for S3
           terraform init -backend-config="bucket=$BUCKET_NAME" \
                         -backend-config="region=us-east-1" \
-                        -backend-config="key=${ENVIRONMENT}/terraform.tfstate"
+                        -backend-config="key=terraform/$ENVIRONMENT/terraform.tfstate"
 
       - name: Terraform Apply with Lambda package
         run: |
@@ -623,13 +605,7 @@ jobs:
       - name: Terraform Init
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
-          BUCKET_NAME="${{ needs.determine-environment.outputs.state_bucket_name }}"
-          
-          # Verify we have a bucket name before proceeding
-          if [ -z "$BUCKET_NAME" ]; then
-            echo "Error: S3 bucket name is empty! Cannot initialize Terraform."
-            exit 1
-          fi
+          BUCKET_NAME="${{ needs.determine-environment.outputs.tf_state_bucket }}"
           
           echo "Using Terraform state bucket: $BUCKET_NAME"
           cd terraform/environments/$ENVIRONMENT
@@ -637,7 +613,7 @@ jobs:
           # Initialize with backend configuration for S3
           terraform init -backend-config="bucket=$BUCKET_NAME" \
                         -backend-config="region=us-east-1" \
-                        -backend-config="key=${ENVIRONMENT}/terraform.tfstate" -backend-config="bucket=${{ needs.determine-environment.outputs.state_bucket_name }}"
+                        -backend-config="key=terraform/$ENVIRONMENT/terraform.tfstate" -backend-config="bucket=${{ needs.determine-environment.outputs.state_bucket_name }}"
 
       - name: Terraform Destroy Plan
         id: destroy-plan
