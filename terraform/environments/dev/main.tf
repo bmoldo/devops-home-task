@@ -202,8 +202,8 @@ module "lambda" {
   function_name      = "${var.lambda_config.function_name}-${local.env_suffix}"
   execution_role_arn = aws_iam_role.lambda_execution_role.arn
 
-  # Use the zip deployment instead of Docker image
-  lambda_zip_path = var.lambda_zip_path # Will default to "lambda_deployment_package.zip" if not provided
+  s3_bucket       = aws_s3_bucket.lambda_packages.bucket
+  s3_key          = var.lambda_config.s3_key
   handler         = var.lambda_config.handler
   runtime         = var.lambda_config.runtime
 
