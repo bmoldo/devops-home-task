@@ -234,6 +234,8 @@ resource "random_password" "db_password" {
 
 # API Gateway
 module "api_gateway" {
+  count = var.s3_key != "" ? 1 : 0
+
   source = "../../modules/api_gateway"
 
   name          = "${var.api_gateway_config.name}-${local.env_suffix}"
@@ -241,8 +243,8 @@ module "api_gateway" {
   stage_name    = var.api_gateway_config.stage_name
   description   = var.api_gateway_config.description
 
-  lambda_function_name = module.lambda.function_name
-  lambda_function_arn  = module.lambda.function_arn
+  lambda_function_name = module.lambda[0].function_name
+  lambda_function_arn  = module.lambda[0].function_arn
 
   environment = var.environment
 
