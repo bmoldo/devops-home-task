@@ -5,7 +5,7 @@ resource "aws_security_group_rule" "allow_lambda_to_rds" {
   from_port                = 5432
   to_port                  = 5432
   protocol                 = "tcp"
-  security_group_id        = module.vpc.default_security_group_id
-  source_security_group_id = module.vpc.lambda_security_group_id
+  security_group_id        = var.rds_sg_id
+  source_security_group_id = var.lambda_sg_id
   description              = "Allow Lambda to connect to RDS on port 5432"
 }
