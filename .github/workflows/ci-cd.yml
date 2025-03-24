@@ -545,6 +545,9 @@ jobs:
           role-to-assume: arn:aws:iam::070503547773:role/GitHubActionsRole
           aws-region: us-east-1
 
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install jq -y
+
       - name: Get database credentials from Secrets Manager
         id: get-db-creds
         run: |
