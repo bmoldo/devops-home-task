@@ -521,20 +521,6 @@ jobs:
     needs: [determine-environment, terraform-apply, update-lambda]
     if: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.run_tests == 'true' && github.event.inputs.destroy_infrastructure == 'false') || (github.event_name != 'workflow_dispatch' && needs.changes.outputs.app == 'true') }}
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:14
-        env:
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_USER: postgres
-          POSTGRES_DB: users
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -545,22 +531,36 @@ jobs:
           role-to-assume: arn:aws:iam::070503547773:role/GitHubActionsRole
           aws-region: us-east-1
 
-      - name: Install jq
-        run: sudo apt-get update && sudo apt-get install jq -y
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.5.0
+
+      - name: Get Lambda and S3 details
+        id: get-aws-resources
+        run: |
+          ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
+          cd terraform/environments/$ENVIRONMENT
+          
+          # Get Lambda function name and ARN
+          LAMBDA_FUNCTION_NAME=$(terraform output -raw lambda_function_name 2>/dev/null || echo "user-api-$ENVIRONMENT")
+          LAMBDA_FUNCTION_ARN=$(terraform output -raw lambda_function_arn 2>/dev/null || echo "arn:aws:lambda:us-east-1:070503547773:function:user-api-$ENVIRONMENT")
+          
+          # Get S3 bucket name
+          S3_BUCKET_NAME=$(terraform output -raw s3_bucket_name 2>/dev/null || echo "user-api-$ENVIRONMENT")
+          
+          # Output the values
+          echo "lambda_function_name=$LAMBDA_FUNCTION_NAME" >> $GITHUB_OUTPUT
+          echo "lambda_function_arn=$LAMBDA_FUNCTION_ARN" >> $GITHUB_OUTPUT
+          echo "s3_bucket_name=$S3_BUCKET_NAME" >> $GITHUB_OUTPUT
 
       - name: Get database credentials from Secrets Manager
         id: get-db-creds
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
-          cd terraform/environments/$ENVIRONMENT
           
-          # Get the secret ARN from Terraform outputs
-          SECRET_ARN=$(terraform output -raw secret_arn 2>/dev/null)
-          
-          if [[ -z "$SECRET_ARN" ]]; then
-            echo "Error: Could not get secret ARN from Terraform output"
-            exit 1
-          fi
+          # Get the secret directly from Secrets Manager
+          SECRET_ARN="arn:aws:secretsmanager:us-east-1:070503547773:secret:user-api-$ENVIRONMENT-credentials-Eg89Zg"
           
           # Get and parse secret value
           SECRET_VALUE=$(aws secretsmanager get-secret-value --secret-id $SECRET_ARN --query SecretString --output text)
@@ -580,38 +580,94 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pytest pytest-cov jq
-
-      - name: Update init-db.sh permissions
-        run: chmod +x init-db.sh
-
-      - name: Initialize test database
-        env:
-          POSTGRES_USER: ${{ steps.get-db-creds.outputs.DB_USER }}
-          POSTGRES_DB: ${{ steps.get-db-creds.outputs.DB_NAME }}
-          PGPASSWORD: ${{ steps.get-db-creds.outputs.DB_PASS }}
-          PGHOST: localhost
-          PGPORT: 5432
-        run: ./init-db.sh
+          pip install pytest pytest-cov boto3 moto jq
 
       - name: Run Lambda tests
         env:
-          DATABASE_URL: postgresql://${{ steps.get-db-creds.outputs.DB_USER }}:${{ steps.get-db-creds.outputs.DB_PASS }}@localhost:5432/${{ steps.get-db-creds.outputs.DB_NAME }}_test
-          ENVIRONMENT: ${{ needs.determine-environment.outputs.environment }}
+          # Database configuration using RDS credentials
+          DATABASE_URL: postgresql://${{ steps.get-db-creds.outputs.DB_USER }}:${{ steps.get-db-creds.outputs.DB_PASS }}@${{ steps.get-db-creds.outputs.DB_HOST }}:${{ steps.get-db-creds.outputs.DB_PORT }}/${{ steps.get-db-creds.outputs.DB_NAME }}
+          
+          # AWS Lambda configuration
           AWS_DEFAULT_REGION: us-east-1
-          S3_BUCKET_NAME: user-api-${{ needs.determine-environment.outputs.environment }}
-          PYTEST_CURRENT_TEST: "True"
-          AWS_LAMBDA_FUNCTION_NAME: user-api-${{ needs.determine-environment.outputs.environment }}
           AWS_REGION: us-east-1
           AWS_EXECUTION_ENV: AWS_Lambda_python3.11
-        run: pytest --cov=app tests/test_lambda.py -v
+          AWS_LAMBDA_FUNCTION_NAME: ${{ steps.get-aws-resources.outputs.lambda_function_name }}
+          LAMBDA_FUNCTION_ARN: ${{ steps.get-aws-resources.outputs.lambda_function_arn }}
+          
+          # Environment & testing configuration
+          ENVIRONMENT: ${{ needs.determine-environment.outputs.environment }}
+          PYTEST_CURRENT_TEST: "True"
+          S3_BUCKET_NAME: ${{ steps.get-aws-resources.outputs.s3_bucket_name }}
+        run: |
+          echo "Running Lambda tests with the following configuration:"
+          echo "DATABASE_URL: $(echo $DATABASE_URL | sed 's/:.*)@/:***@/')"  # Mask password in logs
+          echo "AWS_LAMBDA_FUNCTION_NAME: $AWS_LAMBDA_FUNCTION_NAME"
+          echo "LAMBDA_FUNCTION_ARN: $LAMBDA_FUNCTION_ARN"
+          echo "S3_BUCKET_NAME: $S3_BUCKET_NAME"
+          echo "ENVIRONMENT: $ENVIRONMENT"
+          
+          # Run only the Lambda tests with coverage reporting
+          pytest tests/test_lambda.py -v --cov=app --cov-report=xml --junitxml=test-results.xml
 
-      - name: Upload test coverage report
+      - name: Upload test results
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-coverage-report
-          path: .coverage
+          name: test-results-${{ needs.determine-environment.outputs.environment }}
+          path: |
+            coverage.xml
+            test-results.xml
           retention-days: 5
+
+      - name: Analyze test results
+        if: always()
+        run: |
+          if [ -f test-results.xml ]; then
+            TEST_FAILURES=$(python -c "import xml.etree.ElementTree as ET; tree = ET.parse('test-results.xml'); root = tree.getroot(); print(int(root.attrib.get('failures', 0)) + int(root.attrib.get('errors', 0)))")
+            echo "Test failures/errors: $TEST_FAILURES"
+            
+            if [ "$TEST_FAILURES" -gt 0 ]; then
+              echo "::error::Tests failed with $TEST_FAILURES failures/errors"
+              exit 1
+            else
+              echo "All tests passed successfully!"
+            fi
+          else
+            echo "::warning::No test results found"
+          fi
+
+      - name: Report test coverage
+        if: always() && success()
+        run: |
+          if [ -f coverage.xml ]; then
+            COVERAGE=$(python -c "import xml.etree.ElementTree as ET; tree = ET.parse('coverage.xml'); root = tree.getroot(); print(float(root.attrib.get('line-rate', 0)) * 100)")
+            echo "Test coverage: $COVERAGE%"
+            
+            if (( $(echo "$COVERAGE < 70" | bc -l) )); then
+              echo "::warning::Test coverage is below 70%: $COVERAGE%"
+            else
+              echo "Test coverage meets the requirement: $COVERAGE%"
+            fi
+          else
+            echo "::warning::No coverage report found"
+          fi
+
+      - name: Notify on test completion
+        if: always()
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const { issue, repo } = context;
+            const status = '${{ job.status }}' === 'success' ? '✅ Passed' : '❌ Failed';
+            
+            if (context.payload.pull_request) {
+              github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: `## Test Results for ${{ needs.determine-environment.outputs.environment }} environment: ${status}\n\nSee details in the [workflow run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})`
+              });
+            }
 
   terraform-destroy:
     name: Terraform Destroy Infrastructure

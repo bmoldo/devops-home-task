@@ -15,9 +15,9 @@ from datetime import datetime
 def lambda_context():
     """Mock Lambda context for testing"""
     return SimpleNamespace(
-        function_name="test-function",
+        function_name="user-api-dev",
         memory_limit_in_mb=128,
-        invoked_function_arn="arn:aws:lambda:us-east-1:809313241:function:test-function",
+        invoked_function_arn="arn:aws:lambda:us-east-1:070503547773:function:user-api-dev",
         aws_request_id="52fdfc07-2182-154f-163f-5f0f9a621d72"
     )
 
@@ -30,7 +30,7 @@ def setup_lambda_environment():
         original_env[key] = os.environ.get(key)
     
     # Set Lambda environment variables
-    os.environ['AWS_LAMBDA_FUNCTION_NAME'] = 'test-function'
+    os.environ['AWS_LAMBDA_FUNCTION_NAME'] = 'user-api-dev'
     os.environ['AWS_REGION'] = 'us-east-1'
     os.environ['AWS_EXECUTION_ENV'] = 'AWS_Lambda_python3.11'
     
