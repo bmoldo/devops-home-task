@@ -201,7 +201,6 @@ jobs:
       - name: Terraform Format
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
-          cd terraform/environments/$ENVIRONMENT
           terraform fmt -check -recursive
 
       - name: Terraform Validate

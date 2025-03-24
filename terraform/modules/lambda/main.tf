@@ -7,9 +7,9 @@ resource "aws_lambda_function" "function" {
   handler       = var.handler
   runtime       = var.runtime
 
-  role          = var.execution_role_arn
-  memory_size   = var.memory_size
-  timeout       = var.timeout
+  role        = var.execution_role_arn
+  memory_size = var.memory_size
+  timeout     = var.timeout
 
   dynamic "vpc_config" {
     for_each = var.vpc_config != null ? [var.vpc_config] : []

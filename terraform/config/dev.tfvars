@@ -1,6 +1,6 @@
 environment = "dev"
 aws_region  = "us-east-1"
-account_id  = "070503547773" 
+account_id  = "070503547773"
 
 vpc_config = {
   cidr_block = "10.0.0.0/16"
