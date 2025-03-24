@@ -45,14 +45,3 @@ output "lambda_zip_bucket_arn" {
   description = "The ARN of the Lambda zip S3 bucket"
   value       = aws_s3_bucket.lambda_zip.arn
 }
-
-# Terraform state bucket outputs
-output "terraform_state_bucket_name" {
-  description = "The name of the Terraform state S3 bucket"
-  value       = aws_s3_bucket.terraform_state.id
-}
-
-output "terraform_state_bucket_arn" {
-  description = "The ARN of the Terraform state S3 bucket"
-  value       = aws_s3_bucket.terraform_state.arn
-}

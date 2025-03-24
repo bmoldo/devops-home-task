@@ -68,6 +68,7 @@ jobs:
     outputs:
       environment: ${{ steps.set-env.outputs.environment }}
       tfvars_file: ${{ steps.set-env.outputs.tfvars_file }}
+      state_bucket_name: ${{ steps.check_s3_bucket.outputs.bucket_name }}
     steps:
       - name: Set environment based on branch, PR or input
         id: set-env
@@ -94,6 +95,14 @@ jobs:
           echo "tfvars_file=$TFVARS_FILE" >> $GITHUB_OUTPUT
           echo "Selected environment: $ENVIRONMENT"
           echo "Selected tfvars file: $TFVARS_FILE"
+      
+      - name: Configure AWS credentials with Role
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: arn:aws:iam::070503547773:role/GitHubActionsRole
+          aws-region: us-east-1
+
+
 
   changes:
     name: Detect Changes
@@ -153,89 +162,31 @@ jobs:
           zip -r ../lambda_deployment_package.zip .
           cd ..
 
-      - name: Prepare S3 state bucket
+      - name: Check for S3 state bucket
+        id: check_s3_bucket
         run: |
-          ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
-          ACCOUNT_ID="070503547773"
-          BUCKET_NAME="terraform-state-${ENVIRONMENT}-${ACCOUNT_ID}"
-          
-          # Check if bucket exists
-          if ! aws s3api head-bucket --bucket $BUCKET_NAME 2>/dev/null; then
-            echo "Creating Terraform state bucket: $BUCKET_NAME"
-            aws s3api create-bucket --bucket $BUCKET_NAME --region eu-west-1 --create-bucket-configuration LocationConstraint=eu-west-1
-            aws s3api put-bucket-versioning --bucket $BUCKET_NAME --versioning-configuration Status=Enabled
-            aws s3api put-bucket-encryption --bucket $BUCKET_NAME --server-side-encryption-configuration '{"Rules": [{"ApplyServerSideEncryptionByDefault": {"SSEAlgorithm": "AES256"}}]}'
+          BUCKET_NAME="terraform-state-${{ github.repository_owner }}-${{ github.event.repository.name }}"
+          BUCKET_EXISTS=$(aws s3api head-bucket --bucket $BUCKET_NAME 2>&1 || echo "not exists")
+          if [[ $BUCKET_EXISTS == *"not exists"* ]]; then
+            echo "create_bucket=true" >> $GITHUB_OUTPUT
+            echo "bucket_name=$BUCKET_NAME" >> $GITHUB_OUTPUT
           else
-            echo "Using existing Terraform state bucket: $BUCKET_NAME"
+            echo "create_bucket=false" >> $GITHUB_OUTPUT
+            echo "bucket_name=$BUCKET_NAME" >> $GITHUB_OUTPUT
           fi
 
-      - name: Prepare S3 state bucket
+      - name: Create S3 state bucket if not exists
+        if: steps.check_s3_bucket.outputs.create_bucket == 'true'
         run: |
-          ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
-          BUCKET_NAME="terraform-state-${ENVIRONMENT}-${ACCOUNT_ID}"
-          
-          # Check if bucket exists
-          if ! aws s3api head-bucket --bucket $BUCKET_NAME 2>/dev/null; then
-            echo "Creating Terraform state bucket: $BUCKET_NAME"
-            aws s3api create-bucket --bucket $BUCKET_NAME --region eu-west-1 --create-bucket-configuration LocationConstraint=eu-west-1
-            aws s3api put-bucket-versioning --bucket $BUCKET_NAME --versioning-configuration Status=Enabled
-            aws s3api put-bucket-encryption --bucket $BUCKET_NAME --server-side-encryption-configuration '{"Rules": [{"ApplyServerSideEncryptionByDefault": {"SSEAlgorithm": "AES256"}}]}'
-          else
-            echo "Using existing Terraform state bucket: $BUCKET_NAME"
-          fi
-
-      - name: Prepare S3 state bucket
-        run: |
-          ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
-          ACCOUNT_ID="070503547773"
-          BUCKET_NAME="terraform-state-${ENVIRONMENT}-${ACCOUNT_ID}"
-          
-          # Instead of checking if the bucket exists first (which might fail with AccessDenied),
-          # try to create it and handle the BucketAlreadyExists error gracefully
-          echo "Ensuring Terraform state bucket exists: $BUCKET_NAME"
-          
-          if aws s3api create-bucket --bucket $BUCKET_NAME --region eu-west-1 --create-bucket-configuration LocationConstraint=eu-west-1 2>&1 | grep -q "BucketAlreadyExists"; then
-            echo "Bucket already exists. Continuing with configuration."
-          else
-            echo "Bucket created successfully or command executed without BucketAlreadyExists error."
-          fi
-          
-          # Configure bucket (these will either create new settings or update existing ones)
-          echo "Configuring versioning for bucket: $BUCKET_NAME"
-          aws s3api put-bucket-versioning --bucket $BUCKET_NAME --versioning-configuration Status=Enabled --region eu-west-1
-          
-          echo "Configuring encryption for bucket: $BUCKET_NAME"
-          aws s3api put-bucket-encryption --bucket $BUCKET_NAME --server-side-encryption-configuration '{"Rules": [{"ApplyServerSideEncryptionByDefault": {"SSEAlgorithm": "AES256"}}]}' --region eu-west-1
-          
-          # Add a policy that grants access to the GitHub Actions role
-          echo "Adding bucket policy to grant access to GitHubActionsRole"
-          aws s3api put-bucket-policy --bucket $BUCKET_NAME --policy '{
-            "Version": "2012-10-17",
-            "Statement": [
-              {
-                "Effect": "Allow",
-                "Principal": {
-                  "AWS": "arn:aws:iam::070503547773:role/GitHubActionsRole"
-                },
-                "Action": [
-                  "s3:GetObject",
-                  "s3:PutObject",
-                  "s3:DeleteObject",
-                  "s3:ListBucket"
-                ],
-                "Resource": [
-                  "arn:aws:s3:::'"$BUCKET_NAME"'",
-                  "arn:aws:s3:::'"$BUCKET_NAME"'/*"
-                ]
-              }
-            ]
-          }' --region eu-west-1
+          aws s3api create-bucket --bucket ${{ steps.check_s3_bucket.outputs.bucket_name }} --region us-east-1
+          aws s3api put-bucket-versioning --bucket ${{ steps.check_s3_bucket.outputs.bucket_name }} --versioning-configuration Status=Enabled
+          aws s3api put-bucket-encryption --bucket ${{ steps.check_s3_bucket.outputs.bucket_name }} --server-side-encryption-configuration '{"Rules": [{"ApplyServerSideEncryptionByDefault": {"SSEAlgorithm": "AES256"}}]}'
 
       - name: Terraform Init
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
           cd terraform/environments/$ENVIRONMENT
-          terraform init
+          terraform init -backend-config="bucket=${{ needs.determine-environment.outputs.state_bucket_name }}"
 
       - name: Terraform Format
         run: |
@@ -328,7 +279,7 @@ jobs:
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
           cd terraform/environments/$ENVIRONMENT
-          terraform init
+          terraform init -backend-config="bucket=${{ needs.determine-environment.outputs.state_bucket_name }}"
 
       - name: Download Plan
         uses: actions/download-artifact@v4
@@ -486,7 +437,7 @@ jobs:
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
           cd terraform/environments/$ENVIRONMENT
-          terraform init
+          terraform init -backend-config="bucket=${{ needs.determine-environment.outputs.state_bucket_name }}"
 
       - name: Terraform Apply with Lambda package
         run: |
@@ -620,7 +571,7 @@ jobs:
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
           cd terraform/environments/$ENVIRONMENT
-          terraform init
+          terraform init -backend-config="bucket=${{ needs.determine-environment.outputs.state_bucket_name }}"
 
       - name: Terraform Destroy Plan
         id: destroy-plan
