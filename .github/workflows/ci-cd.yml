@@ -337,19 +337,18 @@ jobs:
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
           cd terraform/environments/$ENVIRONMENT
           
-          # Get available outputs
-          terraform output
+          # Save the outputs to a file first
+          terraform output > terraform_outputs.txt
           
-          # Try to get the RDS endpoint with error handling
-          if terraform output | grep -q "rds_endpoint"; then
+          # Process the file safely
+          if grep -q "rds_endpoint" terraform_outputs.txt; then
             DB_HOST=$(terraform output -raw rds_endpoint 2>/dev/null | tr -d '\n')
           else
             echo "Warning: rds_endpoint output not found, using empty value"
             DB_HOST=""
           fi
           
-          # Try to get the DB name with error handling
-          if terraform output | grep -q "db_name"; then
+          if grep -q "db_name" terraform_outputs.txt; then
             DB_NAME=$(terraform output -raw db_name 2>/dev/null | tr -d '\n')
           else
             echo "Warning: db_name output not found, using empty value"
@@ -549,9 +548,16 @@ jobs:
       - name: Get database credentials from Secrets Manager
         id: get-db-creds
         run: |
-          # Get the environment
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
-          SECRET_ARN="arn:aws:secretsmanager:us-east-1:070503547773:secret:user-api-${ENVIRONMENT}-db-credentials-fIuI0q"
+          cd terraform/environments/$ENVIRONMENT
+          
+          # Get the secret ARN from Terraform outputs
+          SECRET_ARN=$(terraform output -raw secret_arn 2>/dev/null)
+          
+          if [[ -z "$SECRET_ARN" ]]; then
+            echo "Error: Could not get secret ARN from Terraform output"
+            exit 1
+          fi
           
           # Get and parse secret value
           SECRET_VALUE=$(aws secretsmanager get-secret-value --secret-id $SECRET_ARN --query SecretString --output text)
