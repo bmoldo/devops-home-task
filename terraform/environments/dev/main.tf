@@ -2,6 +2,8 @@ provider "aws" {
   region = var.aws_region
 }
 
+data "aws_caller_identity" "current" {}
+
 locals {
   env_suffix = var.environment
   common_tags = {
@@ -59,6 +61,7 @@ module "s3" {
   bucket_name        = var.s3_config.bucket_name
   versioning_enabled = var.s3_config.versioning_enabled
   lifecycle_rules    = var.s3_config.lifecycle_rules
+  account_id         = data.aws_caller_identity.current.account_id
 
   environment = var.environment
 }
