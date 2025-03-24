@@ -1,6 +1,6 @@
 environment = "dev"
 aws_region  = "us-east-1"
-account_id  = "070503547773" # Replace with your actual AWS account ID
+account_id  = "070503547773" 
 
 vpc_config = {
   cidr_block = "10.0.0.0/16"
@@ -60,7 +60,7 @@ lambda_config = {
 }
 
 s3_config = {
-  bucket_name        = "user-queries-dev" # Original bucket name from requirements
+  bucket_name        = "user-queries-dev"
   versioning_enabled = true
   lifecycle_rules = [
     {
