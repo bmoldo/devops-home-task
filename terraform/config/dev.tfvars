@@ -1,19 +1,19 @@
 environment = "dev"
-aws_region  = "us-east-1"
+aws_region  = "eu-west-1"
 account_id  = "070503547773" # Replace with your actual AWS account ID
 
 vpc_config = {
   cidr_block = "10.0.0.0/16"
-  azs        = ["us-east-1a", "us-east-1b", "us-east-1c"]
+  azs        = ["eu-west-1a", "eu-west-1b", "eu-west-1c"]
   public_subnets = [
-    { cidr = "10.0.0.0/24", az = "us-east-1a" },
-    { cidr = "10.0.1.0/24", az = "us-east-1b" },
-    { cidr = "10.0.2.0/24", az = "us-east-1c" }
+    { cidr = "10.0.0.0/24", az = "eu-west-1a" },
+    { cidr = "10.0.1.0/24", az = "eu-west-1b" },
+    { cidr = "10.0.2.0/24", az = "eu-west-1c" }
   ]
   private_subnets = [
-    { cidr = "10.0.10.0/24", az = "us-east-1a" },
-    { cidr = "10.0.11.0/24", az = "us-east-1b" },
-    { cidr = "10.0.12.0/24", az = "us-east-1c" }
+    { cidr = "10.0.10.0/24", az = "eu-west-1a" },
+    { cidr = "10.0.11.0/24", az = "eu-west-1b" },
+    { cidr = "10.0.12.0/24", az = "eu-west-1c" }
   ]
   enable_nat_gateway = true
   single_nat_gateway = true
@@ -46,7 +46,7 @@ lambda_config = {
   environment_variables = {
     ENVIRONMENT              = "dev"
     AWS_LAMBDA_FUNCTION_NAME = "user-api"
-    AWS_REGION               = "us-east-1"
+    AWS_REGION               = "eu-west-1"
     AWS_EXECUTION_ENV        = "AWS_Lambda_python3.11"
     API_GATEWAY_BASE_PATH    = "/"
   }
