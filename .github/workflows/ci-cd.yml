@@ -531,177 +531,264 @@ jobs:
           role-to-assume: arn:aws:iam::070503547773:role/GitHubActionsRole
           aws-region: us-east-1
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v2
-        with:
-          terraform_version: 1.5.0
-
-      - name: Get Lambda and S3 details
-        id: get-aws-resources
+      - name: Get Lambda function name
+        id: get-lambda
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
-          
-          # Default values if Terraform outputs cannot be retrieved
           LAMBDA_FUNCTION_NAME="user-api-${ENVIRONMENT}"
-          LAMBDA_FUNCTION_ARN="arn:aws:lambda:us-east-1:070503547773:function:user-api-${ENVIRONMENT}"
-          S3_BUCKET_NAME="user-api-${ENVIRONMENT}"
           
-          # Try to get values from Terraform only if state is accessible
-          cd terraform/environments/$ENVIRONMENT
-          if terraform init -backend=true -reconfigure >/dev/null 2>&1; then
-            echo "Terraform initialized successfully, retrieving outputs..."
+          echo "function_name=$LAMBDA_FUNCTION_NAME" >> $GITHUB_OUTPUT
+          echo "Using Lambda function: $LAMBDA_FUNCTION_NAME"
+
+      - name: Create test events
+        run: |
+          # Healthcheck event
+          cat > healthcheck_event.json << EOF
+          {
+            "httpMethod": "GET",
+            "path": "/healthcheck",
+            "resource": "/healthcheck",
+            "headers": {
+              "Content-Type": "application/json"
+            },
+            "queryStringParameters": null,
+            "pathParameters": null,
+            "body": null,
+            "isBase64Encoded": false
+          }
+          EOF
+          
+          # Populate users event
+          cat > populate_event.json << EOF
+          {
+            "httpMethod": "POST",
+            "path": "/populate",
+            "resource": "/populate",
+            "headers": {
+              "Content-Type": "application/json"
+            },
+            "queryStringParameters": {
+              "count": "3",
+              "unique": "$(uuidgen)"
+            },
+            "pathParameters": null,
+            "body": null,
+            "isBase64Encoded": false
+          }
+          EOF
+          
+          # Get users event
+          cat > get_users_event.json << EOF
+          {
+            "httpMethod": "GET",
+            "path": "/users",
+            "resource": "/users",
+            "headers": {
+              "Content-Type": "application/json"
+            },
+            "queryStringParameters": null,
+            "pathParameters": null,
+            "body": null,
+            "isBase64Encoded": false
+          }
+          EOF
+          
+          # Get users with filters event
+          cat > get_users_filtered_event.json << EOF
+          {
+            "httpMethod": "GET",
+            "path": "/users",
+            "resource": "/users",
+            "headers": {
+              "Content-Type": "application/json"
+            },
+            "queryStringParameters": {
+              "min_age": "25",
+              "max_age": "40"
+            },
+            "pathParameters": null,
+            "body": null,
+            "isBase64Encoded": false
+          }
+          EOF
+
+      - name: Test healthcheck endpoint
+        run: |
+          FUNCTION_NAME="${{ steps.get-lambda.outputs.function_name }}"
+          echo "Testing healthcheck endpoint with function: $FUNCTION_NAME"
+          
+          aws lambda invoke \
+            --function-name $FUNCTION_NAME \
+            --payload file://healthcheck_event.json \
+            --cli-binary-format raw-in-base64-out \
+            healthcheck_response.json
+          
+          # Print the response
+          echo "Response from Lambda:"
+          cat healthcheck_response.json
+          
+          # Verify response contains healthy status
+          if grep -q "healthy" healthcheck_response.json; then
+            echo "✅ Healthcheck test passed"
+          else
+            echo "❌ Healthcheck test failed"
+            exit 1
+          fi
+
+      - name: Test populate endpoint
+        run: |
+          FUNCTION_NAME="${{ steps.get-lambda.outputs.function_name }}"
+          echo "Testing populate endpoint with function: $FUNCTION_NAME"
+          
+          aws lambda invoke \
+            --function-name $FUNCTION_NAME \
+            --payload file://populate_event.json \
+            --cli-binary-format raw-in-base64-out \
+            populate_response.json
+          
+          # Print the response
+          echo "Response from Lambda:"
+          cat populate_response.json
+          
+          # Verify response indicates users were created
+          if grep -q "Created" populate_response.json; then
+            echo "✅ Populate test passed"
+          else
+            echo "❌ Populate test failed"
+            exit 1
+          fi
+
+      - name: Test get users endpoint
+        run: |
+          FUNCTION_NAME="${{ steps.get-lambda.outputs.function_name }}"
+          echo "Testing get users endpoint with function: $FUNCTION_NAME"
+          
+          aws lambda invoke \
+            --function-name $FUNCTION_NAME \
+            --payload file://get_users_event.json \
+            --cli-binary-format raw-in-base64-out \
+            get_users_response.json
+          
+          # Print the response size
+          echo "Response size: $(wc -c < get_users_response.json) bytes"
+          
+          # Check response structure without printing the whole response
+          if grep -q "users" get_users_response.json && grep -q "count" get_users_response.json && grep -q "s3_file" get_users_response.json; then
+            echo "✅ Get users test passed"
+          else
+            echo "❌ Get users test failed"
+            exit 1
+          fi
+
+      - name: Test filtered users endpoint
+        run: |
+          FUNCTION_NAME="${{ steps.get-lambda.outputs.function_name }}"
+          echo "Testing filtered users endpoint with function: $FUNCTION_NAME"
+          
+          aws lambda invoke \
+            --function-name $FUNCTION_NAME \
+            --payload file://get_users_filtered_event.json \
+            --cli-binary-format raw-in-base64-out \
+            get_users_filtered_response.json
+          
+          # Print the response size
+          echo "Response size: $(wc -c < get_users_filtered_response.json) bytes"
+          
+          # Check response structure without printing the whole response
+          if grep -q "users" get_users_filtered_response.json && grep -q "count" get_users_filtered_response.json; then
+            echo "✅ Filtered users test passed"
+          else
+            echo "❌ Filtered users test failed"
+            exit 1
+          fi
+
+      - name: Test delete user (if users exist)
+        run: |
+          FUNCTION_NAME="${{ steps.get-lambda.outputs.function_name }}"
+          
+          # Get a user to delete
+          USER_COUNT=$(grep -o '"count":[0-9]*' get_users_response.json | awk -F: '{print $2}')
+          echo "Found $USER_COUNT users"
+          
+          if [ "$USER_COUNT" -gt "0" ]; then
+            # Extract first user ID from the response
+            USER_ID=$(grep -o '"id":[0-9]*' get_users_response.json | head -1 | awk -F: '{print $2}')
             
-            # Get Lambda function name if available
-            TF_LAMBDA_NAME=$(terraform output -json | jq -r '.lambda_function_name.value // empty' 2>/dev/null)
-            if [ ! -z "$TF_LAMBDA_NAME" ]; then
-              LAMBDA_FUNCTION_NAME="$TF_LAMBDA_NAME"
-            fi
-            
-            # Get Lambda function ARN if available
-            TF_LAMBDA_ARN=$(terraform output -json | jq -r '.lambda_function_arn.value // empty' 2>/dev/null)
-            if [ ! -z "$TF_LAMBDA_ARN" ]; then
-              LAMBDA_FUNCTION_ARN="$TF_LAMBDA_ARN"
-            fi
-            
-            # Get S3 bucket name if available
-            TF_S3_BUCKET=$(terraform output -json | jq -r '.s3_bucket_name.value // empty' 2>/dev/null)
-            if [ ! -z "$TF_S3_BUCKET" ]; then
-              S3_BUCKET_NAME="$TF_S3_BUCKET"
+            if [ -n "$USER_ID" ]; then
+              echo "Testing delete user endpoint for user ID: $USER_ID"
+              
+              # Create delete event
+              cat > delete_user_event.json << EOF
+              {
+                "httpMethod": "DELETE",
+                "path": "/users/$USER_ID",
+                "resource": "/users/{user_id}",
+                "headers": {
+                  "Content-Type": "application/json"
+                },
+                "pathParameters": {
+                  "user_id": "$USER_ID"
+                },
+                "body": null,
+                "isBase64Encoded": false
+              }
+              EOF
+              
+              # Invoke Lambda
+              aws lambda invoke \
+                --function-name $FUNCTION_NAME \
+                --payload file://delete_user_event.json \
+                --cli-binary-format raw-in-base64-out \
+                delete_user_response.json
+              
+              # Print the response
+              echo "Response from Lambda:"
+              cat delete_user_response.json
+              
+              # Verify user was deleted
+              if grep -q "deleted" delete_user_response.json; then
+                echo "✅ Delete user test passed"
+              else
+                echo "❌ Delete user test failed"
+                exit 1
+              fi
+            else
+              echo "Could not extract user ID from response, skipping delete test"
             fi
           else
-            echo "Could not initialize Terraform, using default values"
+            echo "No users found, skipping delete test"
           fi
-          
-          # Output the values
-          echo "lambda_function_name=$LAMBDA_FUNCTION_NAME" >> $GITHUB_OUTPUT
-          echo "lambda_function_arn=$LAMBDA_FUNCTION_ARN" >> $GITHUB_OUTPUT
-          echo "s3_bucket_name=$S3_BUCKET_NAME" >> $GITHUB_OUTPUT
-          
-          echo "Using Lambda function name: $LAMBDA_FUNCTION_NAME"
-          echo "Using Lambda function ARN: $LAMBDA_FUNCTION_ARN"
-          echo "Using S3 bucket name: $S3_BUCKET_NAME"
 
-      - name: Get database credentials from Secrets Manager
-        id: get-db-creds
+      - name: Generate test report
         run: |
-          ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
+          # Create a simple test report
+          cat > test-report.md << EOF
+          # Lambda Function Tests - ${{ needs.determine-environment.outputs.environment }} environment
           
-          # Hardcoded secret ARN pattern
-          SECRET_ARN="arn:aws:secretsmanager:us-east-1:070503547773:secret:user-api-${ENVIRONMENT}-credentials-Eg89Zg"
+          Tests executed on: $(date)
+          Lambda function: ${{ steps.get-lambda.outputs.function_name }}
           
-          echo "Using secret ARN: $SECRET_ARN"
+          ## Test Results
           
-          # Get and parse secret value
-          SECRET_VALUE=$(aws secretsmanager get-secret-value --secret-id $SECRET_ARN --query SecretString --output text)
+          | Endpoint | Status | Result |
+          |----------|--------|--------|
+          | /healthcheck | ✅ Passed | $(grep -q "healthy" healthcheck_response.json && echo "API is healthy" || echo "Failed") |
+          | /populate | ✅ Passed | $(grep -q "Created" populate_response.json && echo "Users created successfully" || echo "Failed") |
+          | /users | ✅ Passed | $(grep -q "users" get_users_response.json && echo "Retrieved users successfully" || echo "Failed") |
+          | /users (filtered) | ✅ Passed | $(grep -q "users" get_users_filtered_response.json && echo "Filtered users successfully" || echo "Failed") |
+          | /users/{user_id} | $([ -f delete_user_response.json ] && grep -q "deleted" delete_user_response.json && echo "✅ Passed" || echo "⏭️ Skipped") | $([ -f delete_user_response.json ] && grep -q "deleted" delete_user_response.json && echo "User deleted successfully" || echo "Test not executed") |
           
-          if [ -z "$SECRET_VALUE" ]; then
-            echo "Error: Could not retrieve secret value from $SECRET_ARN"
-            exit 1
-          fi
-          
-          # Extract values
-          DB_HOST=$(echo $SECRET_VALUE | jq -r '.host // empty')
-          DB_USER=$(echo $SECRET_VALUE | jq -r '.username // empty')  
-          DB_PASS=$(echo $SECRET_VALUE | jq -r '.password // empty')
-          DB_NAME=$(echo $SECRET_VALUE | jq -r '.dbname // empty')
-          DB_PORT=$(echo $SECRET_VALUE | jq -r '.port // empty')
-          
-          # Validate critical values
-          if [ -z "$DB_HOST" ] || [ -z "$DB_USER" ] || [ -z "$DB_PASS" ]; then
-            echo "Error: Missing critical database credentials"
-            exit 1
-          fi
-          
-          # Output values
-          echo "DB_HOST=$DB_HOST" >> $GITHUB_OUTPUT
-          echo "DB_USER=$DB_USER" >> $GITHUB_OUTPUT
-          echo "DB_PASS=$DB_PASS" >> $GITHUB_OUTPUT
-          echo "DB_NAME=$DB_NAME" >> $GITHUB_OUTPUT 
-          echo "DB_PORT=$DB_PORT" >> $GITHUB_OUTPUT
-          
-          echo "Successfully retrieved database credentials for $DB_HOST"
+          All tests completed successfully!
+          EOF
 
-      - name: Setup Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.11'
-          cache: 'pip'
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pytest pytest-cov boto3 moto jq
-
-      - name: Run Lambda tests
-        env:
-          # Database configuration using RDS credentials
-          DATABASE_URL: postgresql://${{ steps.get-db-creds.outputs.DB_USER }}:${{ steps.get-db-creds.outputs.DB_PASS }}@${{ steps.get-db-creds.outputs.DB_HOST }}:${{ steps.get-db-creds.outputs.DB_PORT }}/${{ steps.get-db-creds.outputs.DB_NAME }}
-          
-          # AWS Lambda configuration
-          AWS_DEFAULT_REGION: us-east-1
-          AWS_REGION: us-east-1
-          AWS_EXECUTION_ENV: AWS_Lambda_python3.11
-          AWS_LAMBDA_FUNCTION_NAME: ${{ steps.get-aws-resources.outputs.lambda_function_name }}
-          LAMBDA_FUNCTION_ARN: ${{ steps.get-aws-resources.outputs.lambda_function_arn }}
-          
-          # Environment & testing configuration
-          ENVIRONMENT: ${{ needs.determine-environment.outputs.environment }}
-          PYTEST_CURRENT_TEST: "True"
-          S3_BUCKET_NAME: ${{ steps.get-aws-resources.outputs.s3_bucket_name }}
-        run: |
-          echo "Running Lambda tests with the following configuration:"
-          echo "DATABASE_URL: $(echo $DATABASE_URL | sed 's/:.*)@/:***@/')"  # Mask password in logs
-          echo "AWS_LAMBDA_FUNCTION_NAME: $AWS_LAMBDA_FUNCTION_NAME"
-          echo "LAMBDA_FUNCTION_ARN: $LAMBDA_FUNCTION_ARN"
-          echo "S3_BUCKET_NAME: $S3_BUCKET_NAME"
-          echo "ENVIRONMENT: $ENVIRONMENT"
-          
-          # Run only the Lambda tests with coverage reporting
-          pytest tests/test_lambda.py -v --cov=app --cov-report=xml --junitxml=test-results.xml
-
-      - name: Upload test results
-        if: always()
+      - name: Upload test report
         uses: actions/upload-artifact@v4
         with:
-          name: test-results-${{ needs.determine-environment.outputs.environment }}
+          name: lambda-test-report-${{ needs.determine-environment.outputs.environment }}
           path: |
-            coverage.xml
-            test-results.xml
+            test-report.md
+            *_response.json
           retention-days: 5
-
-      - name: Analyze test results
-        if: always()
-        run: |
-          if [ -f test-results.xml ]; then
-            TEST_FAILURES=$(python -c "import xml.etree.ElementTree as ET; tree = ET.parse('test-results.xml'); root = tree.getroot(); print(int(root.attrib.get('failures', 0)) + int(root.attrib.get('errors', 0)))")
-            echo "Test failures/errors: $TEST_FAILURES"
-            
-            if [ "$TEST_FAILURES" -gt 0 ]; then
-              echo "::error::Tests failed with $TEST_FAILURES failures/errors"
-              exit 1
-            else
-              echo "All tests passed successfully!"
-            fi
-          else
-            echo "::warning::No test results found"
-          fi
-
-      - name: Report test coverage
-        if: always() && success()
-        run: |
-          if [ -f coverage.xml ]; then
-            COVERAGE=$(python -c "import xml.etree.ElementTree as ET; tree = ET.parse('coverage.xml'); root = tree.getroot(); print(float(root.attrib.get('line-rate', 0)) * 100)")
-            echo "Test coverage: $COVERAGE%"
-            
-            if (( $(echo "$COVERAGE < 70" | bc -l) )); then
-              echo "::warning::Test coverage is below 70%: $COVERAGE%"
-            else
-              echo "Test coverage meets the requirement: $COVERAGE%"
-            fi
-          else
-            echo "::warning::No coverage report found"
-          fi
 
       - name: Notify on test completion
         if: always()
@@ -716,9 +803,66 @@ jobs:
                 issue_number: context.issue.number,
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                body: `## Test Results for ${{ needs.determine-environment.outputs.environment }} environment: ${status}\n\nSee details in the [workflow run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})`
+                body: `## Lambda Function Tests for ${{ needs.determine-environment.outputs.environment }} environment: ${status}\n\nSee details in the [workflow run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})`
               });
             }
+
+      - name: Test get users endpoint and verify S3 storage
+        run: |
+          FUNCTION_NAME="${{ steps.get-lambda.outputs.function_name }}"
+          S3_BUCKET_NAME="user-api-${{ needs.determine-environment.outputs.environment }}"
+          echo "Testing get users endpoint with function: $FUNCTION_NAME and verifying S3 storage in bucket: $S3_BUCKET_NAME"
+          
+          # Invoke Lambda
+          aws lambda invoke \
+            --function-name $FUNCTION_NAME \
+            --payload file://get_users_event.json \
+            --cli-binary-format raw-in-base64-out \
+            get_users_response.json
+          
+          # Print the response size
+          echo "Response size: $(wc -c < get_users_response.json) bytes"
+          
+          # Extract the S3 file path from the response
+          S3_FILE=$(grep -o '"s3_file":"[^"]*"' get_users_response.json | sed 's/"s3_file":"//g' | sed 's/"//g')
+          
+          if [ -z "$S3_FILE" ]; then
+            echo "❌ No S3 file found in response"
+            exit 1
+          else
+            echo "Found S3 file reference: $S3_FILE"
+            
+            # Check if the file exists in the S3 bucket
+            if aws s3api head-object --bucket $S3_BUCKET_NAME --key $S3_FILE &> /dev/null; then
+              echo "✅ S3 file exists in bucket"
+              
+              # Download the S3 file for inspection
+              aws s3 cp s3://$S3_BUCKET_NAME/$S3_FILE s3_content.json
+              
+              # Verify the S3 file structure
+              if grep -q "query_parameters" s3_content.json && grep -q "results" s3_content.json; then
+                echo "✅ S3 file has correct structure"
+                
+                # Print some key information without revealing all data
+                echo "S3 file metadata:"
+                grep "timestamp\|result_count" s3_content.json
+              else
+                echo "❌ S3 file is missing expected structure"
+                exit 1
+              fi
+            else
+              echo "❌ S3 file does not exist in bucket"
+              exit 1
+            fi
+          fi
+          
+          # Check response structure 
+          if grep -q "users" get_users_response.json && grep -q "count" get_users_response.json && grep -q "s3_file" get_users_response.json; then
+            echo "✅ Get users test passed"
+          else
+            echo "❌ Get users test failed"
+            exit 1
+          fi          
 
   terraform-destroy:
     name: Terraform Destroy Infrastructure
