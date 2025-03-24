@@ -122,7 +122,7 @@ resource "aws_iam_role_policy_attachment" "lambda_basic_execution_attachment" {
 # CI/CD role (for GitHub Actions or other CI/CD systems)
 resource "aws_iam_role" "cicd_role" {
   name = "${var.environment}-${var.app_name}-cicd-role"
-  
+
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [

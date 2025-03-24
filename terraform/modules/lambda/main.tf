@@ -5,8 +5,8 @@ resource "aws_lambda_function" "function" {
   s3_bucket = var.s3_bucket
   s3_key    = var.s3_key
 
-  handler   = var.handler
-  runtime   = var.runtime
+  handler = var.handler
+  runtime = var.runtime
 
   memory_size = var.memory_size
   timeout     = var.timeout

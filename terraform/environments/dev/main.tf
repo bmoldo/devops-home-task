@@ -202,10 +202,10 @@ module "lambda" {
   function_name      = "${var.lambda_config.function_name}-${local.env_suffix}"
   execution_role_arn = aws_iam_role.lambda_execution_role.arn
 
-  s3_bucket       = aws_s3_bucket.lambda_packages.bucket
-  s3_key          = var.lambda_config.s3_key
-  handler         = var.lambda_config.handler
-  runtime         = var.lambda_config.runtime
+  s3_bucket = aws_s3_bucket.lambda_packages.bucket
+  s3_key    = var.lambda_config.s3_key
+  handler   = var.lambda_config.handler
+  runtime   = var.lambda_config.runtime
 
   memory_size = var.lambda_config.memory_size
   timeout     = var.lambda_config.timeout

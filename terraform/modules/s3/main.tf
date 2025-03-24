@@ -1,7 +1,7 @@
 # Lambda zip bucket
 resource "aws_s3_bucket" "lambda_zip" {
   bucket = "lambda-zip-${var.environment}-${var.account_id}"
-  
+
   tags = {
     Name        = "lambda-zip-${var.environment}"
     Environment = var.environment
@@ -11,7 +11,7 @@ resource "aws_s3_bucket" "lambda_zip" {
 
 resource "aws_s3_bucket_versioning" "lambda_zip_versioning" {
   bucket = aws_s3_bucket.lambda_zip.id
-  
+
   versioning_configuration {
     status = "Enabled"
   }
@@ -62,7 +62,7 @@ resource "aws_s3_bucket_public_access_block" "lambda_zip_block_public_access" {
 # User API bucket
 resource "aws_s3_bucket" "user_api" {
   bucket = var.bucket_name
-  
+
   tags = {
     Name        = var.bucket_name
     Environment = var.environment
@@ -72,7 +72,7 @@ resource "aws_s3_bucket" "user_api" {
 
 resource "aws_s3_bucket_versioning" "user_api_versioning" {
   bucket = aws_s3_bucket.user_api.id
-  
+
   versioning_configuration {
     status = var.versioning_enabled ? "Enabled" : "Suspended"
   }
@@ -94,15 +94,15 @@ resource "aws_s3_bucket_lifecycle_configuration" "user_api_lifecycle" {
 
   dynamic "rule" {
     for_each = var.lifecycle_rules
-    
+
     content {
       id     = rule.value.id
       status = rule.value.enabled ? "Enabled" : "Disabled"
-      
+
       filter {
         prefix = rule.value.prefix
       }
-      
+
       expiration {
         days = rule.value.expiration_days
       }
