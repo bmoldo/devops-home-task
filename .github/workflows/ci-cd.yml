@@ -114,16 +114,18 @@ jobs:
           
           echo "Using bucket name: $BUCKET_NAME"
           
+          # Debug: Ensure the output is being set
+          echo "Setting bucket_name=$BUCKET_NAME in GitHub output"
+          echo "bucket_name=$BUCKET_NAME" >> $GITHUB_OUTPUT
+          
           # Check if bucket exists
           BUCKET_EXISTS=$(aws s3api head-bucket --bucket $BUCKET_NAME 2>&1 || echo "not exists")
           
           if [[ $BUCKET_EXISTS == *"not exists"* ]]; then
             echo "create_bucket=true" >> $GITHUB_OUTPUT
-            echo "bucket_name=$BUCKET_NAME" >> $GITHUB_OUTPUT
             echo "Bucket does not exist, will create: $BUCKET_NAME"
           else
             echo "create_bucket=false" >> $GITHUB_OUTPUT
-            echo "bucket_name=$BUCKET_NAME" >> $GITHUB_OUTPUT
             echo "Bucket exists: $BUCKET_NAME"
           fi
 
