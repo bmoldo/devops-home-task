@@ -360,7 +360,7 @@ jobs:
 
   build-lambda-package:
     name: Build Lambda Package
-    needs: [determine-environment, changes]
+    needs: [determine-environment, terraform-plan, build-lambda-package]
     if: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.build_and_deploy == 'true' && github.event.inputs.destroy_infrastructure == 'false') || (github.event_name != 'workflow_dispatch' && needs.changes.outputs.app == 'true') }}
     runs-on: ubuntu-latest
     outputs:

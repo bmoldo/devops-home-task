@@ -1,15 +1,15 @@
 resource "aws_lambda_function" "function" {
+  count = var.s3_key != "" ? 1 : 0
+
   function_name = var.function_name
+  s3_bucket     = var.s3_key != "" ? var.s3_bucket : null
+  s3_key        = var.s3_key != "" ? var.s3_key : null
+  handler       = var.handler
+  runtime       = var.runtime
+
   role          = var.execution_role_arn
-
-  s3_bucket = var.s3_bucket
-  s3_key    = var.s3_key
-
-  handler = var.handler
-  runtime = var.runtime
-
-  memory_size = var.memory_size
-  timeout     = var.timeout
+  memory_size   = var.memory_size
+  timeout       = var.timeout
 
   dynamic "vpc_config" {
     for_each = var.vpc_config != null ? [var.vpc_config] : []
