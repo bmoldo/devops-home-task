@@ -540,35 +540,86 @@ jobs:
         id: get-aws-resources
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
+          
+          # Default values if Terraform outputs cannot be retrieved
+          LAMBDA_FUNCTION_NAME="user-api-${ENVIRONMENT}"
+          LAMBDA_FUNCTION_ARN="arn:aws:lambda:us-east-1:070503547773:function:user-api-${ENVIRONMENT}"
+          S3_BUCKET_NAME="user-api-${ENVIRONMENT}"
+          
+          # Try to get values from Terraform only if state is accessible
           cd terraform/environments/$ENVIRONMENT
-          
-          # Get Lambda function name and ARN
-          LAMBDA_FUNCTION_NAME=$(terraform output -raw lambda_function_name 2>/dev/null || echo "user-api-$ENVIRONMENT")
-          LAMBDA_FUNCTION_ARN=$(terraform output -raw lambda_function_arn 2>/dev/null || echo "arn:aws:lambda:us-east-1:070503547773:function:user-api-$ENVIRONMENT")
-          
-          # Get S3 bucket name
-          S3_BUCKET_NAME=$(terraform output -raw s3_bucket_name 2>/dev/null || echo "user-api-$ENVIRONMENT")
+          if terraform init -backend=true -reconfigure >/dev/null 2>&1; then
+            echo "Terraform initialized successfully, retrieving outputs..."
+            
+            # Get Lambda function name if available
+            TF_LAMBDA_NAME=$(terraform output -json | jq -r '.lambda_function_name.value // empty' 2>/dev/null)
+            if [ ! -z "$TF_LAMBDA_NAME" ]; then
+              LAMBDA_FUNCTION_NAME="$TF_LAMBDA_NAME"
+            fi
+            
+            # Get Lambda function ARN if available
+            TF_LAMBDA_ARN=$(terraform output -json | jq -r '.lambda_function_arn.value // empty' 2>/dev/null)
+            if [ ! -z "$TF_LAMBDA_ARN" ]; then
+              LAMBDA_FUNCTION_ARN="$TF_LAMBDA_ARN"
+            fi
+            
+            # Get S3 bucket name if available
+            TF_S3_BUCKET=$(terraform output -json | jq -r '.s3_bucket_name.value // empty' 2>/dev/null)
+            if [ ! -z "$TF_S3_BUCKET" ]; then
+              S3_BUCKET_NAME="$TF_S3_BUCKET"
+            fi
+          else
+            echo "Could not initialize Terraform, using default values"
+          fi
           
           # Output the values
           echo "lambda_function_name=$LAMBDA_FUNCTION_NAME" >> $GITHUB_OUTPUT
           echo "lambda_function_arn=$LAMBDA_FUNCTION_ARN" >> $GITHUB_OUTPUT
           echo "s3_bucket_name=$S3_BUCKET_NAME" >> $GITHUB_OUTPUT
+          
+          echo "Using Lambda function name: $LAMBDA_FUNCTION_NAME"
+          echo "Using Lambda function ARN: $LAMBDA_FUNCTION_ARN"
+          echo "Using S3 bucket name: $S3_BUCKET_NAME"
 
       - name: Get database credentials from Secrets Manager
         id: get-db-creds
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
           
-          # Get the secret directly from Secrets Manager
-          SECRET_ARN="arn:aws:secretsmanager:us-east-1:070503547773:secret:user-api-$ENVIRONMENT-credentials-Eg89Zg"
+          # Hardcoded secret ARN pattern
+          SECRET_ARN="arn:aws:secretsmanager:us-east-1:070503547773:secret:user-api-${ENVIRONMENT}-credentials-Eg89Zg"
+          
+          echo "Using secret ARN: $SECRET_ARN"
           
           # Get and parse secret value
           SECRET_VALUE=$(aws secretsmanager get-secret-value --secret-id $SECRET_ARN --query SecretString --output text)
-          echo "DB_HOST=$(echo $SECRET_VALUE | jq -r '.host')" >> $GITHUB_OUTPUT
-          echo "DB_USER=$(echo $SECRET_VALUE | jq -r '.username')" >> $GITHUB_OUTPUT
-          echo "DB_PASS=$(echo $SECRET_VALUE | jq -r '.password')" >> $GITHUB_OUTPUT
-          echo "DB_NAME=$(echo $SECRET_VALUE | jq -r '.dbname')" >> $GITHUB_OUTPUT
-          echo "DB_PORT=$(echo $SECRET_VALUE | jq -r '.port')" >> $GITHUB_OUTPUT
+          
+          if [ -z "$SECRET_VALUE" ]; then
+            echo "Error: Could not retrieve secret value from $SECRET_ARN"
+            exit 1
+          fi
+          
+          # Extract values
+          DB_HOST=$(echo $SECRET_VALUE | jq -r '.host // empty')
+          DB_USER=$(echo $SECRET_VALUE | jq -r '.username // empty')  
+          DB_PASS=$(echo $SECRET_VALUE | jq -r '.password // empty')
+          DB_NAME=$(echo $SECRET_VALUE | jq -r '.dbname // empty')
+          DB_PORT=$(echo $SECRET_VALUE | jq -r '.port // empty')
+          
+          # Validate critical values
+          if [ -z "$DB_HOST" ] || [ -z "$DB_USER" ] || [ -z "$DB_PASS" ]; then
+            echo "Error: Missing critical database credentials"
+            exit 1
+          fi
+          
+          # Output values
+          echo "DB_HOST=$DB_HOST" >> $GITHUB_OUTPUT
+          echo "DB_USER=$DB_USER" >> $GITHUB_OUTPUT
+          echo "DB_PASS=$DB_PASS" >> $GITHUB_OUTPUT
+          echo "DB_NAME=$DB_NAME" >> $GITHUB_OUTPUT 
+          echo "DB_PORT=$DB_PORT" >> $GITHUB_OUTPUT
+          
+          echo "Successfully retrieved database credentials for $DB_HOST"
 
       - name: Setup Python
         uses: actions/setup-python@v4
