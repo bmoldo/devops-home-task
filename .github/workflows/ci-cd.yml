@@ -511,7 +511,6 @@ jobs:
           cd terraform/environments/$ENVIRONMENT
           terraform apply -auto-approve \
             -var-file=$TFVARS_FILE \
-            -var="use_s3_source=true" \
             -var="s3_bucket=$S3_BUCKET" \
             -var="s3_key=$S3_KEY"
 
