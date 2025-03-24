@@ -1,6 +1,6 @@
 # Terraform state bucket
 resource "aws_s3_bucket" "terraform_state" {
-  bucket = "terraform-state-${var.environment}"
+  bucket = "terraform-state-${var.environment}-${var.account_id}"
   
   tags = {
     Name        = "terraform-state-${var.environment}"
@@ -38,7 +38,7 @@ resource "aws_s3_bucket_public_access_block" "terraform_state_block_public_acces
 
 # Lambda zip bucket
 resource "aws_s3_bucket" "lambda_zip" {
-  bucket = "lambda-zip-${var.environment}"
+  bucket = "lambda-zip-${var.environment}-${var.account_id}"
   
   tags = {
     Name        = "lambda-zip-${var.environment}"
