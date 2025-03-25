@@ -28,13 +28,13 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
-        
+
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
           cache: 'pip'
-          
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
@@ -55,19 +55,19 @@ jobs:
             echo "cd .." >> create_lambda_package.sh
             chmod +x create_lambda_package.sh
           fi
-          
+
       - name: Create Lambda deployment package
         id: create-lambda-package
         run: |
           ./create_lambda_package.sh
           echo "lambda_package_path=lambda_deployment_package.zip" >> $GITHUB_OUTPUT
-          
+
       - name: Configure AWS credentials with Role
         uses: aws-actions/configure-aws-credentials@v2
         with:
           role-to-assume: ${{ secrets.aws_role }}
           aws-region: us-east-1
-          
+
       - name: Upload Lambda package to S3
         id: upload-lambda
         run: |
@@ -76,13 +76,12 @@ jobs:
           TIMESTAMP=$(date +%Y%m%d%H%M%S)
           S3_KEY="lambda/lambda_deployment_package_${TIMESTAMP}.zip"
           S3_BUCKET="lambda-packages-${ENVIRONMENT}-${ACCOUNT_ID}"
-          
-          # Check if bucket exists
+
           if ! aws s3api head-bucket --bucket $S3_BUCKET 2>/dev/null; then
             echo "Creating S3 bucket for Lambda packages: $S3_BUCKET"
             aws s3 mb s3://$S3_BUCKET --region us-east-1
           fi
-          
+
           aws s3 cp lambda_deployment_package.zip s3://$S3_BUCKET/$S3_KEY
           if aws s3 ls s3://$S3_BUCKET/$S3_KEY; then
             echo "Lambda package uploaded successfully to s3://$S3_BUCKET/$S3_KEY"
@@ -100,24 +99,24 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
-        
+
       - name: Configure AWS credentials with Role
         uses: aws-actions/configure-aws-credentials@v2
         with:
           role-to-assume: ${{ secrets.aws_role }}
           aws-region: us-east-1
-          
+
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: 1.5.0
-          
+
       - name: Setup AWS and Terraform
         uses: ./.github/actions/setup-aws-terraform
         id: setup
         with:
-        aws-role: ${{ secrets.aws_role }}
-        environment: ${{ inputs.environment }}
+          aws-role: ${{ secrets.aws_role }}
+          environment: ${{ inputs.environment }}
 
       - name: Create Lambda S3 variables file
         run: |
@@ -130,9 +129,7 @@ jobs:
           s3_bucket = "$S3_BUCKET"
           s3_key = "$S3_KEY"
           EOF
-          echo "Created lambda_vars.auto.tfvars:"
-          cat terraform/environments/$ENVIRONMENT/lambda_vars.auto.tfvars
-          
+
       - name: Create placeholder zip file
         run: |
           echo "Creating placeholder zip for Terraform"
@@ -141,42 +138,38 @@ jobs:
           cd placeholder
           zip -r ../lambda_deployment_package.zip .
           cd ..
-          
+
       - name: Update backend configuration
         run: |
           ENVIRONMENT="${{ inputs.environment }}"
           cat <<EOF > terraform/environments/$ENVIRONMENT/backend.tf
           terraform {
             backend "s3" {
-              bucket = "${{ ${{ steps.setup.outputs.s3-bucket-name }} }}"
+              bucket = "${{ steps.setup.outputs.s3-bucket-name }}"
               key    = "terraform/$ENVIRONMENT/terraform.tfstate"
               region = "us-east-1"
             }
           }
           EOF
-          
+
       - name: Terraform Init
         run: |
-          ENVIRONMENT="${{ inputs.environment }}"
-          cd terraform/environments/$ENVIRONMENT
+          cd terraform/environments/${{ inputs.environment }}
           terraform init
-          
+
       - name: Update Lambda Function
         run: |
           ENVIRONMENT="${{ inputs.environment }}"
           ACCOUNT_ID="070503547773"
           S3_BUCKET="lambda-packages-${ENVIRONMENT}-${ACCOUNT_ID}"
           S3_KEY="${{ needs.build-lambda-package.outputs.s3_lambda_key }}"
-          
-          # Find Lambda function name from Terraform state
+
           cd terraform/environments/$ENVIRONMENT
           LAMBDA_FUNCTION_NAME=$(terraform output -raw lambda_function_name 2>/dev/null || echo "")
-          
+
           if [ -z "$LAMBDA_FUNCTION_NAME" ]; then
             echo "Warning: Could not find Lambda function name in Terraform outputs"
             echo "Continuing to apply Terraform..."
-            
-            # Apply Terraform to update Lambda using S3 source
             terraform apply -auto-approve \
               -var="s3_bucket=$S3_BUCKET" \
               -var="s3_key=$S3_KEY" \
@@ -184,15 +177,13 @@ jobs:
           else
             echo "Found Lambda function: $LAMBDA_FUNCTION_NAME"
             echo "Updating Lambda code directly via AWS CLI"
-            
-            # Update Lambda function code directly
+
             aws lambda update-function-code \
               --function-name $LAMBDA_FUNCTION_NAME \
               --s3-bucket $S3_BUCKET \
               --s3-key $S3_KEY \
               --publish
-              
-            # Check if we need to update environment variables
+
             if [ -n "${{ inputs.db_host }}" ] || [ -n "${{ inputs.db_name }}" ]; then
               echo "Updating Lambda environment variables"
               aws lambda update-function-configuration \

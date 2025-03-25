@@ -2,50 +2,57 @@ name: Infrastructure Pipeline
 
 on:
   push:
-    branches: [ development ]
+    branches:
+      - development
     paths:
-      - 'Dockerfile'
-      - 'requirements.txt'
-      - 'docker-compose.yml'
-      - 'app/**'
-      - 'terraform/**'
+      - Dockerfile
+      - requirements.txt
+      - docker-compose.yml
+      - app/**
+      - terraform/**
   pull_request:
-    branches: [ qa, prod ]
-    types: [ opened, synchronize, reopened, closed ]
+    branches:
+      - qa
+      - prod
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - closed
     paths:
-      - 'Dockerfile'
-      - 'requirements.txt'
-      - 'docker-compose.yml'
-      - 'app/**'
-      - 'terraform/**'
+      - Dockerfile
+      - requirements.txt
+      - docker-compose.yml
+      - app/**
+      - terraform/**
   workflow_dispatch:
     inputs:
       environment:
-        description: 'Environment to deploy to'
+        description: Environment to deploy to
         required: true
-        default: 'development'
+        default: development
         type: choice
         options:
           - development
           - qa
           - prod
       run_infrastructure:
-        description: 'Run Terraform Infrastructure'
+        description: Run Terraform Infrastructure
         required: true
         default: true
         type: boolean
       run_tests:
-        description: 'Run Tests'
+        description: Run Tests
         required: true
         default: true
         type: boolean
       build_and_deploy:
-        description: 'Build and Deploy'
+        description: Build and Deploy
         required: true
         default: true
         type: boolean
       destroy_infrastructure:
-        description: 'Destroy Infrastructure'
+        description: Destroy Infrastructure
         required: true
         default: false
         type: boolean
@@ -66,15 +73,13 @@ jobs:
       - name: Set environment based on branch/PR or input
         id: set-env
         run: |
-          # Default to development
           ENVIRONMENT="development"
           TFVARS_FILE="../../config/${ENVIRONMENT}.tfvars"
-          
+
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             ENVIRONMENT="${{ github.event.inputs.environment }}"
             TFVARS_FILE="../../config/${ENVIRONMENT}.tfvars"
           elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            # For PRs, use base branch as target
             if [[ "${{ github.base_ref }}" == "qa" ]]; then
               ENVIRONMENT="qa"
               TFVARS_FILE="../../config/qa.tfvars"
@@ -88,7 +93,7 @@ jobs:
               TFVARS_FILE="../../config/development.tfvars"
             fi
           fi
-          
+
           echo "environment=$ENVIRONMENT" >> $GITHUB_OUTPUT
           echo "tfvars_file=$TFVARS_FILE" >> $GITHUB_OUTPUT
           echo "Selected environment: $ENVIRONMENT"
@@ -121,21 +126,28 @@ jobs:
 
   code-scan:
     name: Python Code Quality Scan
-    needs: [changes]
+    needs:
+      - changes
     if: |
-      needs.changes.outputs.lambda == 'true' && 
-      (github.event_name == 'push' || github.event_name == 'pull_request' || 
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.run_tests == 'true'))
+      needs.changes.outputs.lambda == 'true' &&  (
+        github.event_name == 'push' || 
+        github.event_name == 'pull_request' || 
+        (github.event_name == 'workflow_dispatch' && github.event.inputs.run_tests == 'true')
+      )
     uses: ./.github/workflows/python-scan.yml
 
   terraform-operations:
     name: Terraform Operations
-    needs: [determine-environment, changes, code-scan]
-    if: |
-      always() && 
-      (needs.code-scan.result == 'success' || needs.code-scan.result == 'skipped') &&
-      ((needs.changes.outputs.terraform == 'true' && (github.event_name == 'push' || github.event_name == 'pull_request')) || 
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.run_infrastructure == 'true'))
+    needs:
+      - determine-environment
+      - changes
+      - code-scan
+    if: >
+      always() && (needs.code-scan.result == 'success' || needs.code-scan.result == 'skipped') &&
+      (
+        (needs.changes.outputs.terraform == 'true' && (github.event_name == 'push' || github.event_name == 'pull_request')) || 
+        (github.event_name == 'workflow_dispatch' && github.event.inputs.run_infrastructure == 'true')
+      )
     uses: ./.github/workflows/terraform-workflow.yml
     with:
       environment: ${{ needs.determine-environment.outputs.environment }}
@@ -146,14 +158,18 @@ jobs:
 
   lambda-deployment:
     name: Lambda Build and Deploy
-    needs: [determine-environment, changes, code-scan, terraform-operations]
-    if: |
-      always() && 
-      (needs.code-scan.result == 'success' || needs.code-scan.result == 'skipped') &&
+    needs:
+      - determine-environment
+      - changes
+      - code-scan
+      - terraform-operations
+    if: >
+      always() && (needs.code-scan.result == 'success' || needs.code-scan.result == 'skipped') &&
       needs.terraform-operations.result == 'success' &&
-      ((needs.changes.outputs.lambda == 'true' && (github.event_name == 'push' || github.event_name == 'pull_request')) || 
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.build_and_deploy == 'true')) &&
-      github.event.inputs.destroy_infrastructure != 'true'
+      (
+        (needs.changes.outputs.lambda == 'true' && (github.event_name == 'push' || github.event_name == 'pull_request')) || 
+        (github.event_name == 'workflow_dispatch' && github.event.inputs.build_and_deploy == 'true')
+      ) && github.event.inputs.destroy_infrastructure != 'true'
     uses: ./.github/workflows/lambda-workflow.yml
     with:
       environment: ${{ needs.determine-environment.outputs.environment }}

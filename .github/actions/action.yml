@@ -32,22 +32,12 @@ runs:
       with:
         terraform_version: ${{ inputs.terraform-version }}
         
-    - name: Check for S3 state bucket
-      id: check_s3_bucket
-      shell: bash
-      run: |
-        BUCKET_NAME="terraform-state-${{ github.repository_owner }}-${{ github.event.repository.name }}"
-        BUCKET_EXISTS=$(aws s3api head-bucket --bucket $BUCKET_NAME 2>&1 || echo "not exists")
-        if [[ $BUCKET_EXISTS == *"not exists"* ]]; then
-          echo "create_bucket=true" >> $GITHUB_OUTPUT
-          echo "bucket_name=$BUCKET_NAME" >> $GITHUB_OUTPUT
-          # Create bucket if it doesn't exist
-          aws s3 mb s3://$BUCKET_NAME --region us-east-1
-          aws s3api put-bucket-versioning --bucket $BUCKET_NAME --versioning-configuration Status=Enabled
-        else
-          echo "create_bucket=false" >> $GITHUB_OUTPUT
-          echo "bucket_name=$BUCKET_NAME" >> $GITHUB_OUTPUT
-        fi
+    - name: Setup AWS and Terraform
+      uses: ./.github/actions/setup-aws-terraform
+      id: setup
+      with:
+        aws-role: ${{ secrets.aws_role }}
+        environment: ${{ inputs.environment }}
         
     - name: Update backend configuration
       shell: bash
