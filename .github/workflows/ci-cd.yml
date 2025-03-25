@@ -53,7 +53,7 @@ on:
       destroy_infrastructure:
         description: 'Destroy Infrastructure'
         required: true
-        default: false
+        default: true
         type: boolean
 
 permissions:
@@ -864,7 +864,7 @@ jobs:
     name: Terraform Destroy Infrastructure
     needs: [determine-environment]
     # Only run when manually triggered with destroy_infrastructure=true
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.destroy_infrastructure == 'true'
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.destroy_infrastructure == true
     runs-on: ubuntu-latest
     environment: ${{ needs.determine-environment.outputs.environment }}
     steps:
