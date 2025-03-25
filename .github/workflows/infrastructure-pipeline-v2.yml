@@ -134,7 +134,7 @@ jobs:
         github.event_name == 'pull_request' || 
         (github.event_name == 'workflow_dispatch' && github.event.inputs.run_tests == 'true')
       )
-    uses: ./.github/workflows/python-scan.yml
+    uses: ./.github/workflows/python-scan-v2.yml
 
   terraform-operations:
     name: Terraform Operations
@@ -148,7 +148,7 @@ jobs:
         (needs.changes.outputs.terraform == 'true' && (github.event_name == 'push' || github.event_name == 'pull_request')) || 
         (github.event_name == 'workflow_dispatch' && github.event.inputs.run_infrastructure == 'true')
       )
-    uses: ./.github/workflows/terraform-workflow.yml
+    uses: ./.github/workflows/terraform-workflow-v2.yml
     with:
       environment: ${{ needs.determine-environment.outputs.environment }}
       tfvars_file: ${{ needs.determine-environment.outputs.tfvars_file }}
@@ -170,7 +170,7 @@ jobs:
         (needs.changes.outputs.lambda == 'true' && (github.event_name == 'push' || github.event_name == 'pull_request')) || 
         (github.event_name == 'workflow_dispatch' && github.event.inputs.build_and_deploy == 'true')
       ) && github.event.inputs.destroy_infrastructure != 'true'
-    uses: ./.github/workflows/lambda-workflow.yml
+    uses: ./.github/workflows/lambda-workflow-v2.yml
     with:
       environment: ${{ needs.determine-environment.outputs.environment }}
       db_host: ${{ needs.terraform-operations.outputs.db_host }}
