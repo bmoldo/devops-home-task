@@ -50,7 +50,7 @@ variable "environment" {
 variable "handler" {
   description = "Lambda function handler"
   type        = string
-  default     = "lambda_handler.handler"
+  default     = "main.lambda_handler"
 }
 
 variable "runtime" {
