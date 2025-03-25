@@ -250,10 +250,3 @@ module "api_gateway" {
 
   depends_on = [module.lambda]
 }
-
-module "networking" {
-  source = "../../modules/networking"
-
-  rds_sg_id    = module.vpc.default_security_group_id
-  lambda_sg_id = module.vpc.lambda_security_group_id
-}
