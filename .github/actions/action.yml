@@ -1,0 +1,64 @@
+name: 'Setup AWS and Terraform'
+description: 'Sets up AWS credentials and Terraform with S3 backend'
+
+inputs:
+  aws-role:
+    description: 'AWS IAM role to assume'
+    required: true
+  environment:
+    description: 'Environment name (development, qa, prod)'
+    required: true
+  terraform-version:
+    description: 'Version of Terraform to install'
+    required: false
+    default: '1.5.0'
+
+outputs:
+  s3-bucket-name:
+    description: 'Name of the S3 bucket for Terraform state'
+    value: ${{ ${{ steps.setup.outputs.s3-bucket-name }} }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Configure AWS credentials with Role
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        role-to-assume: ${{ inputs.aws-role }}
+        aws-region: us-east-1
+        
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v2
+      with:
+        terraform_version: ${{ inputs.terraform-version }}
+        
+    - name: Check for S3 state bucket
+      id: check_s3_bucket
+      shell: bash
+      run: |
+        BUCKET_NAME="terraform-state-${{ github.repository_owner }}-${{ github.event.repository.name }}"
+        BUCKET_EXISTS=$(aws s3api head-bucket --bucket $BUCKET_NAME 2>&1 || echo "not exists")
+        if [[ $BUCKET_EXISTS == *"not exists"* ]]; then
+          echo "create_bucket=true" >> $GITHUB_OUTPUT
+          echo "bucket_name=$BUCKET_NAME" >> $GITHUB_OUTPUT
+          # Create bucket if it doesn't exist
+          aws s3 mb s3://$BUCKET_NAME --region us-east-1
+          aws s3api put-bucket-versioning --bucket $BUCKET_NAME --versioning-configuration Status=Enabled
+        else
+          echo "create_bucket=false" >> $GITHUB_OUTPUT
+          echo "bucket_name=$BUCKET_NAME" >> $GITHUB_OUTPUT
+        fi
+        
+    - name: Update backend configuration
+      shell: bash
+      run: |
+        ENVIRONMENT="${{ inputs.environment }}"
+        cat <<EOF > terraform/environments/$ENVIRONMENT/backend.tf
+        terraform {
+          backend "s3" {
+            bucket = "${{ ${{ steps.setup.outputs.s3-bucket-name }} }}"
+            key    = "terraform/$ENVIRONMENT/terraform.tfstate"
+            region = "us-east-1"
+          }
+        }
+        EOF

@@ -1,0 +1,282 @@
+name: Terraform Workflow
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+      tfvars_file:
+        required: true
+        type: string
+      destroy:
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      aws_role:
+        required: true
+    outputs:
+      db_host:
+        description: "Database host endpoint"
+        value: ${{ jobs.terraform-apply.outputs.db_host || jobs.terraform-destroy.outputs.db_host }}
+      db_name:
+        description: "Database name"
+        value: ${{ jobs.terraform-apply.outputs.db_name || jobs.terraform-destroy.outputs.db_name }}
+
+jobs:
+  terraform-plan:
+    if: inputs.destroy == false
+    name: Terraform Plan
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        
+      - name: Setup AWS and Terraform
+        uses: ./.github/actions/setup-aws-terraform
+        id: setup
+        with:
+            aws-role: ${{ secrets.aws_role }}
+            environment: ${{ inputs.environment }}
+            terraform-version: 1.5.0
+          
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.5.0
+          
+      - name: Create valid placeholder Lambda ZIP
+        run: |
+          echo "Creating valid placeholder Lambda ZIP for planning"
+          mkdir -p placeholder_lambda
+          echo 'def lambda_handler(event, context): return {"statusCode": 200, "body": "Placeholder Lambda function"}' > placeholder_lambda/lambda_handler.py
+          cd placeholder_lambda
+          zip -r ../lambda_deployment_package.zip .
+          cd ..
+               
+      - name: Terraform Init
+        run: |
+          ENVIRONMENT="${{ inputs.environment }}"
+          cd terraform/environments/$ENVIRONMENT
+          terraform init
+          
+      - name: Terraform Format
+        run: |
+          terraform fmt -check -recursive
+          
+      - name: Terraform Validate
+        run: |
+          ENVIRONMENT="${{ inputs.environment }}"
+          cd terraform/environments/$ENVIRONMENT
+          terraform validate
+          
+      - name: Terraform Plan
+        id: plan
+        run: |
+          ENVIRONMENT="${{ inputs.environment }}"
+          TFVARS_FILE="${{ inputs.tfvars_file }}"
+          cd terraform/environments/$ENVIRONMENT
+          terraform plan -var-file=$TFVARS_FILE -var="lambda_zip_path=../../../lambda_deployment_package.zip" -out=tfplan
+          terraform show -json tfplan > plan.json
+          
+      - name: Upload Plan Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-${{ inputs.environment }}-plan
+          path: terraform/environments/${{ inputs.environment }}/plan.json
+          retention-days: 5
+          
+      - name: Comment Plan on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const environment = '${{ inputs.environment }}';
+            const planSummary = fs.readFileSync('terraform/environments/' + environment + '/tfplan', 'utf8');
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## Terraform Plan for ${environment} environment\n\n` +
+                    `\`\`\`\n${planSummary}\n\`\`\``
+            });
+
+  terraform-destroy:
+    if: inputs.destroy == true
+    name: Terraform Destroy Infrastructure
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    outputs:
+      db_host: ${{ steps.outputs.outputs.db_host }}
+      db_name: ${{ steps.outputs.outputs.db_name }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        
+      - name: Configure AWS credentials with Role
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: ${{ secrets.aws_role }}
+          aws-region: us-east-1
+          
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.5.0
+          
+      - name: Create placeholder zip for destroy
+        run: |
+          echo "Creating placeholder Lambda ZIP for destroy operation"
+          mkdir -p placeholder
+          echo "placeholder" > placeholder/placeholder.txt
+          cd placeholder
+          zip -r ../lambda_deployment_package.zip .
+          cd ..
+          
+      - name: Check for S3 state bucket
+        id: check_s3_bucket
+        run: |
+          BUCKET_NAME="terraform-state-${{ github.repository_owner }}-${{ github.event.repository.name }}"
+          BUCKET_EXISTS=$(aws s3api head-bucket --bucket $BUCKET_NAME 2>&1 || echo "not exists")
+          if [[ $BUCKET_EXISTS == *"not exists"* ]]; then
+            echo "create_bucket=true" >> $GITHUB_OUTPUT
+            echo "bucket_name=$BUCKET_NAME" >> $GITHUB_OUTPUT
+          else
+            echo "create_bucket=false" >> $GITHUB_OUTPUT
+            echo "bucket_name=$BUCKET_NAME" >> $GITHUB_OUTPUT
+          fi
+          
+      - name: Update backend configuration
+        run: |
+          ENVIRONMENT="${{ inputs.environment }}"
+          cat <<EOF > terraform/environments/$ENVIRONMENT/backend.tf
+          terraform {
+            backend "s3" {
+              bucket = "${{ ${{ steps.setup.outputs.s3-bucket-name }} }}"
+              key    = "terraform/$ENVIRONMENT/terraform.tfstate"
+              region = "us-east-1"
+            }
+          }
+          EOF
+          
+      - name: Terraform Init
+        run: |
+          ENVIRONMENT="${{ inputs.environment }}"
+          cd terraform/environments/$ENVIRONMENT
+          terraform init
+          
+      - name: Terraform Destroy
+        run: |
+          ENVIRONMENT="${{ inputs.environment }}"
+          TFVARS_FILE="${{ inputs.tfvars_file }}"
+          cd terraform/environments/$ENVIRONMENT
+          terraform destroy -auto-approve -var-file=$TFVARS_FILE -var="lambda_zip_path=../../../lambda_deployment_package.zip"
+          
+      - name: Get Terraform Outputs (will be empty after destroy)
+        id: outputs
+        run: |
+          echo "db_host=" >> $GITHUB_OUTPUT
+          echo "db_name=" >> $GITHUB_OUTPUT
+
+  terraform-apply:
+    if: inputs.destroy == false
+    name: Terraform Apply Infrastructure
+    needs: [terraform-plan]
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    outputs:
+      db_host: ${{ steps.outputs.outputs.db_host }}
+      db_name: ${{ steps.outputs.outputs.db_name }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        
+      - name: Configure AWS credentials with Role
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: ${{ secrets.aws_role }}
+          aws-region: us-east-1
+          
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.5.0
+          
+      - name: Check for S3 state bucket
+        id: check_s3_bucket
+        run: |
+          BUCKET_NAME="terraform-state-${{ github.repository_owner }}-${{ github.event.repository.name }}"
+          BUCKET_EXISTS=$(aws s3api head-bucket --bucket $BUCKET_NAME 2>&1 || echo "not exists")
+          if [[ $BUCKET_EXISTS == *"not exists"* ]]; then
+            echo "create_bucket=true" >> $GITHUB_OUTPUT
+            echo "bucket_name=$BUCKET_NAME" >> $GITHUB_OUTPUT
+          else
+            echo "create_bucket=false" >> $GITHUB_OUTPUT
+            echo "bucket_name=$BUCKET_NAME" >> $GITHUB_OUTPUT
+          fi
+          
+      - name: Create valid placeholder Lambda ZIP
+        run: |
+          echo "Creating valid placeholder Lambda ZIP for deployment"
+          mkdir -p placeholder_lambda
+          echo 'def lambda_handler(event, context): return {"statusCode": 200, "body": "Placeholder Lambda function"}' > placeholder_lambda/lambda_handler.py
+          cd placeholder_lambda
+          zip -r ../lambda_deployment_package.zip .
+          cd ..
+          
+      - name: Update backend configuration
+        run: |
+          ENVIRONMENT="${{ inputs.environment }}"
+          cat <<EOF > terraform/environments/$ENVIRONMENT/backend.tf
+          terraform {
+            backend "s3" {
+              bucket = "${{ ${{ steps.setup.outputs.s3-bucket-name }} }}"
+              key    = "terraform/$ENVIRONMENT/terraform.tfstate"
+              region = "us-east-1"
+            }
+          }
+          EOF
+          
+      - name: Terraform Init
+        run: |
+          ENVIRONMENT="${{ inputs.environment }}"
+          cd terraform/environments/$ENVIRONMENT
+          terraform init
+          
+      - name: Download Plan
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-${{ inputs.environment }}-plan
+          path: terraform/environments/${{ inputs.environment }}/
+          
+      - name: Terraform Apply
+        run: |
+          ENVIRONMENT="${{ inputs.environment }}"
+          TFVARS_FILE="${{ inputs.tfvars_file }}"
+          cd terraform/environments/$ENVIRONMENT
+          terraform apply -auto-approve -var-file=$TFVARS_FILE -var="lambda_zip_path=../../../lambda_deployment_package.zip"
+          
+      - name: Get Terraform Outputs
+        id: outputs
+        run: |
+          ENVIRONMENT="${{ inputs.environment }}"
+          cd terraform/environments/$ENVIRONMENT
+          terraform output > terraform_outputs.txt
+          if grep -q "rds_endpoint" terraform_outputs.txt; then
+            DB_HOST=$(terraform output -raw rds_endpoint 2>/dev/null | tr -d '\n')
+          else
+            echo "Warning: rds_endpoint output not found, using empty value"
+            DB_HOST=""
+          fi
+          if grep -q "db_name" terraform_outputs.txt; then
+            DB_NAME=$(terraform output -raw db_name 2>/dev/null | tr -d '\n')
+          else
+            echo "Warning: db_name output not found, using empty value"
+            DB_NAME=""
+          fi
+          echo "db_host=${DB_HOST}" >> $GITHUB_OUTPUT
+          echo "db_name=${DB_NAME}" >> $GITHUB_OUTPUT
