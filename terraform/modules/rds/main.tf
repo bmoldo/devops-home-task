@@ -46,8 +46,8 @@ resource "aws_db_instance" "main" {
   allocated_storage     = var.allocated_storage
   max_allocated_storage = var.max_allocated_storage
 
-  master_username = var.username
-  master_password = var.password
+  username = var.username
+  password = var.password
 
   db_name                 = var.database_name
   parameter_group_name    = "default.${var.engine}${var.engine_version}"

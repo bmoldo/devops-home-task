@@ -19,9 +19,8 @@ output "username" {
 }
 
 output "password" {
-  description = "The master password for the RDS instance"
-  value       = random_password.db_password.result
-  sensitive   = true
+  value     = var.password
+  sensitive = true
 }
 
 output "db_name" {
