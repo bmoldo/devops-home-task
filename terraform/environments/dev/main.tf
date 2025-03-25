@@ -49,7 +49,7 @@ module "rds" {
   backup_window           = var.rds_config.backup_window
 
   subnet_ids             = module.vpc.private_subnet_ids
-  vpc_security_group_ids = [module.vpc.default_security_group_id]
+  vpc_security_group_ids = [module.lambda.security_group_id]
 
   environment = var.environment
 }
@@ -211,8 +211,8 @@ module "lambda" {
   timeout     = var.lambda_config.timeout
 
   vpc_config = {
-    subnet_ids         = module.vpc.private_subnet_ids
-    security_group_ids = [module.vpc.lambda_security_group_id]
+    subnet_ids         = module.vpc.private_subnets
+    security_group_ids = [aws_security_group.lambda_sg.id]
   }
 
   environment_variables = {
