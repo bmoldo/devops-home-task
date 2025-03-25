@@ -246,7 +246,7 @@ jobs:
 
   terraform-apply:
     name: Terraform Apply Infrastructure
-    needs: [determine-environment, terraform-plan, build-lambda-package]
+    needs: [determine-environment, terraform-plan]
     # Only run apply on:
     # 1. Direct pushes to development/qa branches
     # 2. Approved and merged PRs to main
