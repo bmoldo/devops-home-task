@@ -39,17 +39,18 @@ jobs:
           zip -r ../lambda_deployment_package.zip .
           cd ..
 
-      - name: Check for S3 state bucket
+      - name: Check S3 bucket existence
         id: check_s3_bucket
         run: |
-          BUCKET_NAME="terraform-state-${{ github.repository_owner }}-${{ github.event.repository.name }}"
-          BUCKET_EXISTS=$(aws s3api head-bucket --bucket $BUCKET_NAME 2>&1 || echo "not exists")
-          if [[ $BUCKET_EXISTS == *"not exists"* ]]; then
-            echo "create_bucket=true" >> $GITHUB_OUTPUT
+          BUCKET_NAME="terraform-state-dev-070503547773"
+          
+          # Check if the bucket exists
+          if aws s3api head-bucket --bucket $BUCKET_NAME 2>/dev/null; then
             echo "bucket_name=$BUCKET_NAME" >> $GITHUB_OUTPUT
+            echo "S3 bucket $BUCKET_NAME exists"
           else
-            echo "create_bucket=false" >> $GITHUB_OUTPUT
-            echo "bucket_name=$BUCKET_NAME" >> $GITHUB_OUTPUT
+            echo "Warning: S3 bucket $BUCKET_NAME does not exist"
+            exit 1
           fi
 
       - name: Set TFVARS file path
@@ -89,13 +90,15 @@ jobs:
 
       - name: Update backend configuration
         run: |
-          ENVIRONMENT="${{ github.event.inputs.environment }}"
+          ENVIRONMENT="dev"
           cat <<EOF > terraform/environments/$ENVIRONMENT/backend.tf
           terraform {
             backend "s3" {
-              bucket = "${{ steps.check_s3_bucket.outputs.bucket_name }}"
-              key    = "terraform/$ENVIRONMENT/terraform.tfstate"
-              region = "us-east-1"
+              bucket         = "terraform-state-dev-070503547773"
+              key            = "terraform/dev/terraform.tfstate"
+              region         = "us-east-1"
+              encrypt        = true
+              dynamodb_table = "terraform-locks-dev"
             }
           }
           EOF
