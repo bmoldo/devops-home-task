@@ -89,3 +89,8 @@ variable "environment" {
   description = "Environment name"
   type        = string
 }
+
+variable "password" {
+  description = "Master DB password"
+  type        = string
+}

@@ -42,6 +42,7 @@ module "rds" {
   allocated_storage       = var.rds_config.allocated_storage
   max_allocated_storage   = var.rds_config.max_allocated_storage
   username                = var.rds_config.username
+  password                = random_password.db_password.result
   database_name           = var.rds_config.database_name
   backup_retention_period = var.rds_config.backup_retention_period
   deletion_protection     = var.rds_config.deletion_protection
@@ -197,6 +198,14 @@ resource "aws_cloudwatch_log_group" "lambda_logs" {
   tags              = local.common_tags
 }
 
+# Random password for database if needed
+resource "random_password" "db_password" {
+  length           = 16
+  special          = true
+  override_special = "!#$%&*()-_=+[]{}<>:?"
+}
+
+
 # Lambda function for API
 module "lambda" {
   source = "../../modules/lambda"
@@ -225,13 +234,6 @@ module "lambda" {
   }
 
   environment = var.environment
-}
-
-# Random password for database if needed
-resource "random_password" "db_password" {
-  length           = 16
-  special          = true
-  override_special = "!#$%&*()-_=+[]{}<>:?"
 }
 
 # API Gateway

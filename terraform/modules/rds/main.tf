@@ -45,8 +45,10 @@ resource "aws_db_instance" "main" {
   instance_class          = var.instance_class
   allocated_storage       = var.allocated_storage
   max_allocated_storage   = var.max_allocated_storage
-  username                = var.username
-  password                = random_password.db_password.result
+
+  master_username         = var.username
+  master_password         = var.password
+
   db_name                 = var.database_name
   parameter_group_name    = "default.${var.engine}${var.engine_version}"
   backup_retention_period = var.backup_retention_period
@@ -64,12 +66,6 @@ resource "aws_db_instance" "main" {
   }
 }
 
-resource "random_password" "db_password" {
-  length           = 16
-  special          = true
-  override_special = "!#$%&*()-_=+[]{}<>:?"
-}
-
 resource "aws_secretsmanager_secret" "db_credentials" {
   name        = "${var.identifier}-credentials"
   description = "Database credentials for ${var.identifier}"
@@ -83,7 +79,7 @@ resource "aws_secretsmanager_secret_version" "db_credentials" {
   secret_id = aws_secretsmanager_secret.db_credentials.id
   secret_string = jsonencode({
     username = var.username
-    password = random_password.db_password.result
+    password = var.password                          
     host     = aws_db_instance.main.address
     port     = 5432
     dbname   = var.database_name
