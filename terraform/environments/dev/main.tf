@@ -29,24 +29,7 @@ module "vpc" {
   environment = var.environment
 }
 
-# lambda security group
-resource "aws_security_group" "lambda_sg" {
-  name        = "lambda-sg-${var.environment}"
-  description = "Security group for Lambda functions"
-  vpc_id      = module.vpc.vpc_id
 
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  tags = {
-    Name        = "lambda-sg-${var.environment}"
-    Environment = var.environment
-  }
-}
 
 # RDS Database
 module "rds" {
@@ -68,7 +51,7 @@ module "rds" {
   backup_window           = var.rds_config.backup_window
 
   subnet_ids             = module.vpc.private_subnet_ids
-  vpc_security_group_ids = [aws_security_group.lambda_sg.id]
+  vpc_security_group_ids = [module.vpc.lambda_security_group_id]
 
   environment = var.environment
 }
@@ -231,7 +214,7 @@ module "lambda" {
 
   vpc_config = {
     subnet_ids         = module.vpc.private_subnet_ids
-    security_group_ids = [aws_security_group.lambda_sg.id]
+    security_group_ids = [module.vpc.lambda_security_group_id]
   }
 
   environment_variables = {
