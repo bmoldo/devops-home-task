@@ -56,10 +56,36 @@ jobs:
         id: set-tfvars
         run: |
           ENVIRONMENT="dev"
-          TFVARS_FILE="../../config/${ENVIRONMENT}.tfvars"
+          TFVARS_FILE="../config/${ENVIRONMENT}.tfvars"
+          
+          # Check if the tfvars file exists at the expected path
+          if [ ! -f "terraform/environments/$ENVIRONMENT/$TFVARS_FILE" ]; then
+            echo "TFVARS file not found at terraform/environments/$ENVIRONMENT/$TFVARS_FILE"
+            echo "Checking for alternative locations..."
+            
+            # Look for tfvars files in common locations
+            ALTERNATIVE_PATHS=(
+              "terraform/config/${ENVIRONMENT}.tfvars"
+              "config/${ENVIRONMENT}.tfvars"
+              "terraform/environments/$ENVIRONMENT/${ENVIRONMENT}.tfvars"
+            )
+            
+            for ALT_PATH in "${ALTERNATIVE_PATHS[@]}"; do
+              if [ -f "$ALT_PATH" ]; then
+                echo "Found tfvars file at $ALT_PATH"
+                TFVARS_FILE="$ALT_PATH"
+                break
+              fi
+            done
+          fi
+          
           echo "tfvars_file=$TFVARS_FILE" >> $GITHUB_OUTPUT
           echo "Selected environment: $ENVIRONMENT"
           echo "Selected tfvars file: $TFVARS_FILE"
+          
+          # Debug - Show directory structure for troubleshooting
+          echo "Directory structure:"
+          find terraform -type f -name "*.tfvars" | sort
 
       - name: Update backend configuration
         run: |
@@ -83,11 +109,19 @@ jobs:
       - name: Terraform Destroy Plan
         id: plan
         run: |
-          ENVIRONMENT="${{ github.event.inputs.environment }}"
+          ENVIRONMENT="dev"
           TFVARS_FILE="${{ steps.set-tfvars.outputs.tfvars_file }}"
           
           cd terraform/environments/$ENVIRONMENT
-          terraform plan -destroy -var-file=$TFVARS_FILE -var="lambda_zip_path=../../../lambda_deployment_package.zip" -out=destroy.tfplan
+          
+          # Check if tfvars file exists before using it
+          if [ -f "$TFVARS_FILE" ]; then
+            terraform plan -destroy -var-file=$TFVARS_FILE -var="lambda_zip_path=../../../lambda_deployment_package.zip" -out=destroy.tfplan
+          else
+            echo "Warning: TFVARS file not found. Running without var-file..."
+            terraform plan -destroy -var="lambda_zip_path=../../../lambda_deployment_package.zip" -out=destroy.tfplan
+          fi
+          
           terraform show -no-color destroy.tfplan > destroy_plan.txt
 
       - name: Display Destroy Plan
@@ -97,9 +131,16 @@ jobs:
 
       - name: Terraform Destroy
         run: |
-          ENVIRONMENT="${{ github.event.inputs.environment }}"
+          ENVIRONMENT="dev"
           TFVARS_FILE="${{ steps.set-tfvars.outputs.tfvars_file }}"
           
           cd terraform/environments/$ENVIRONMENT
           echo "Proceeding with destruction of $ENVIRONMENT environment..."
-          terraform destroy -auto-approve -var-file=$TFVARS_FILE -var="lambda_zip_path=../../../lambda_deployment_package.zip"
+          
+          # Check if tfvars file exists before using it
+          if [ -f "$TFVARS_FILE" ]; then
+            terraform destroy -auto-approve -var-file=$TFVARS_FILE -var="lambda_zip_path=../../../lambda_deployment_package.zip"
+          else
+            echo "Warning: TFVARS file not found. Running without var-file..."
+            terraform destroy -auto-approve -var="lambda_zip_path=../../../lambda_deployment_package.zip"
+          fi
