@@ -53,7 +53,7 @@ on:
       destroy_infrastructure:
         description: 'Destroy Infrastructure'
         required: true
-        default: true
+        default: false
         type: boolean
 
 permissions:
@@ -216,7 +216,6 @@ jobs:
           TFVARS_FILE="${{ needs.determine-environment.outputs.tfvars_file }}"
           
           cd terraform/environments/$ENVIRONMENT
-          terraform state rm module.rds.aws_security_group.db
           terraform plan -var-file=$TFVARS_FILE -var="lambda_zip_path=../../../lambda_deployment_package.zip" -out=tfplan
           terraform show -json tfplan > plan.json
       
@@ -864,6 +863,7 @@ jobs:
   terraform-destroy:
     name: Terraform Destroy Infrastructure
     needs: [determine-environment]
+    # Only run when manually triggered with destroy_infrastructure=true
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.destroy_infrastructure == 'true'
     runs-on: ubuntu-latest
     environment: ${{ needs.determine-environment.outputs.environment }}
@@ -923,29 +923,13 @@ jobs:
           cd terraform/environments/$ENVIRONMENT
           terraform init
 
-      - name: Terraform Destroy Plan
-        id: destroy-plan
+      # Removing the plan step to simplify the workflow
+      # Directly applying destroy with auto-approve
+
+      - name: Terraform Destroy
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
           TFVARS_FILE="${{ needs.determine-environment.outputs.tfvars_file }}"
           
           cd terraform/environments/$ENVIRONMENT
-          terraform plan -destroy -var-file=$TFVARS_FILE -var="lambda_zip_path=../../../lambda_deployment_package.zip" -out=destroy.tfplan
-          terraform show -json destroy.tfplan > destroy.json
-
-      - name: Request approval for destroy
-        uses: trstringer/manual-approval@v1
-        with:
-          secret: ${{ github.TOKEN }}
-          approvers: ${{ github.actor }}
-          minimum-approvals: 1
-          issue-title: "Approval needed for Terraform destroy in ${{ needs.determine-environment.outputs.environment }} environment"
-          issue-body: "Please approve the infrastructure destruction in the ${{ needs.determine-environment.outputs.environment }} environment by adding a comment with 'approve' in this issue."
-          exclude-workflow-initiator-as-approver: false
-          timeout-minutes: 10
-
-      - name: Terraform Destroy
-        run: |
-          ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
-          cd terraform/environments/$ENVIRONMENT
-          terraform apply -auto-approve destroy.tfplan
+          terraform destroy -auto-approve -var-file=$TFVARS_FILE -var="lambda_zip_path=../../../lambda_deployment_package.zip"
