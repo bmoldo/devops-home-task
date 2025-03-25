@@ -216,7 +216,7 @@ jobs:
           TFVARS_FILE="${{ needs.determine-environment.outputs.tfvars_file }}"
           
           cd terraform/environments/$ENVIRONMENT
-          terraform import module.rds.aws_security_group.db sg-016bb06d47bbf2c4d
+          terraform import -var-file=$TFVARS_FILE module.rds.aws_security_group.db sg-016bb06d47bbf2c4d
           terraform plan -var-file=$TFVARS_FILE -var="lambda_zip_path=../../../lambda_deployment_package.zip" -out=tfplan
           terraform show -json tfplan > plan.json
       
