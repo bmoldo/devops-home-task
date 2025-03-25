@@ -102,9 +102,12 @@ jobs:
 
       - name: Terraform Init
         run: |
-          ENVIRONMENT="${{ github.event.inputs.environment }}"
+          ENVIRONMENT="dev"
           cd terraform/environments/$ENVIRONMENT
-          terraform init
+          
+          # Try with -reconfigure flag which is needed when backend configuration changes
+          echo "Running terraform init with -reconfigure flag..."
+          terraform init -reconfigure
 
       - name: Terraform Destroy Plan
         id: plan
