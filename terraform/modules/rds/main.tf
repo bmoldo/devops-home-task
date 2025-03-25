@@ -39,15 +39,15 @@ data "aws_security_group" "existing" {
 }
 
 resource "aws_db_instance" "main" {
-  identifier              = var.identifier
-  engine                  = var.engine
-  engine_version          = var.engine_version
-  instance_class          = var.instance_class
-  allocated_storage       = var.allocated_storage
-  max_allocated_storage   = var.max_allocated_storage
+  identifier            = var.identifier
+  engine                = var.engine
+  engine_version        = var.engine_version
+  instance_class        = var.instance_class
+  allocated_storage     = var.allocated_storage
+  max_allocated_storage = var.max_allocated_storage
 
-  master_username         = var.username
-  master_password         = var.password
+  master_username = var.username
+  master_password = var.password
 
   db_name                 = var.database_name
   parameter_group_name    = "default.${var.engine}${var.engine_version}"
@@ -79,7 +79,7 @@ resource "aws_secretsmanager_secret_version" "db_credentials" {
   secret_id = aws_secretsmanager_secret.db_credentials.id
   secret_string = jsonencode({
     username = var.username
-    password = var.password                          
+    password = var.password
     host     = aws_db_instance.main.address
     port     = 5432
     dbname   = var.database_name
