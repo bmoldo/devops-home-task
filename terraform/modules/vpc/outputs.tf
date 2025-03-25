@@ -37,11 +37,3 @@ output "internet_gateway_id" {
   description = "ID of the Internet Gateway"
   value       = aws_internet_gateway.main.id
 }
-
-output "default_security_group_id" {
-  value = aws_vpc.main.default_security_group_id
-}
-
-output "lambda_security_group_id" {
-  value = aws_security_group.lambda.id
-}
