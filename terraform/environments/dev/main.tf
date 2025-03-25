@@ -54,7 +54,7 @@ module "rds" {
   environment = var.environment
 }
 
-# S3 Bucket for application data
+# S3 Bucket for application data - Keep the user_api bucket only, not lambda_zip
 module "s3" {
   source = "../../modules/s3"
 
@@ -66,7 +66,7 @@ module "s3" {
   environment = var.environment
 }
 
-# S3 Bucket for Lambda deployment packages
+# S3 Bucket for Lambda deployment packages - Keep this as the single lambda bucket
 resource "aws_s3_bucket" "lambda_packages" {
   bucket = "lambda-packages-${var.environment}-${var.account_id}"
 
@@ -250,7 +250,6 @@ module "api_gateway" {
 
   depends_on = [module.lambda]
 }
-
 
 module "networking" {
   source = "../../modules/networking"
