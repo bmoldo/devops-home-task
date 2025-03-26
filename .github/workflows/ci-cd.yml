@@ -113,8 +113,8 @@ jobs:
       - name: List Terraform Directory
         run: ls -la $GITHUB_WORKSPACE/terraform
     
-      - name: List Terraform Config Directory
-        run: ls -la $GITHUB_WORKSPACE/terraform/config
+    - name: List Terraform Config Directory
+      run: ls -la $GITHUB_WORKSPACE/terraform/config
     
 
   changes:
@@ -159,17 +159,22 @@ jobs:
     runs-on: ubuntu-latest
     environment: ${{ needs.determine-environment.outputs.environment }}
     steps:
-      - name: Checkout code
+      - name: Checkout Repository
         uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
       - name: Configure AWS credentials with Role
         uses: aws-actions/configure-aws-credentials@v2
         with:
           role-to-assume: arn:aws:iam::070503547773:role/GitHubActionsRole
           aws-region: us-east-1
+
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: 1.5.0
+
       - name: Check for S3 state bucket
         id: check_s3_bucket
         run: |
@@ -182,6 +187,7 @@ jobs:
             echo "create_bucket=false" >> $GITHUB_OUTPUT
             echo "bucket_name=$BUCKET_NAME" >> $GITHUB_OUTPUT
           fi
+
       - name: Create valid placeholder Lambda ZIP
         run: |
           echo "Creating valid placeholder Lambda ZIP for planning"
@@ -190,6 +196,7 @@ jobs:
           cd placeholder_lambda
           zip -r ../lambda_deployment_package.zip .
           cd ..
+
       - name: Update backend configuration
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
@@ -203,36 +210,39 @@ jobs:
             }
           }
           EOF
+
       - name: Terraform Init
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
-          cd terraform/environments/$ENVIRONMENT
-          terraform init
+          terraform -chdir=terraform/environments/$ENVIRONMENT init
+
       - name: Terraform Format
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
-          terraform fmt -check -recursive
+          terraform -chdir=terraform/environments/$ENVIRONMENT fmt -check -recursive
+
       - name: Terraform Validate
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
-          cd terraform/environments/$ENVIRONMENT
-          terraform validate
+          terraform -chdir=terraform/environments/$ENVIRONMENT validate
+
       - name: Terraform Plan
         id: plan
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
           TFVARS_FILE="${GITHUB_WORKSPACE}/terraform/config/${ENVIRONMENT}.tfvars"
-          # Debug: list the terraform config folder to verify the file is present
-          ls -la ${GITHUB_WORKSPACE}/terraform/config
+          # Debug: list the terraform config directory to verify the file exists
+          ls -la "${GITHUB_WORKSPACE}/terraform/config"
           terraform -chdir=terraform/environments/$ENVIRONMENT plan -var-file="$TFVARS_FILE" -var="lambda_zip_path=../../../lambda_deployment_package.zip" -out=tfplan
           terraform -chdir=terraform/environments/$ENVIRONMENT show -json tfplan > plan.json
-        
+
       - name: Upload Plan Artifact
         uses: actions/upload-artifact@v4
         with:
           name: terraform-${{ needs.determine-environment.outputs.environment }}-plan
           path: terraform/environments/${{ needs.determine-environment.outputs.environment }}/plan.json
           retention-days: 5
+
       - name: Comment Plan on PR
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v6
@@ -249,6 +259,7 @@ jobs:
               body: `## Terraform Plan for ${environment} environment\n\n` +
                     `\`\`\`\n${planSummary}\n\`\`\``
             });
+
 
   terraform-apply:
     name: Terraform Apply Infrastructure
