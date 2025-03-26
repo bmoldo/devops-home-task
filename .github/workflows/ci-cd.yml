@@ -120,7 +120,7 @@ jobs:
         with:
           clean: true
           fetch-depth: 0
-          path: main
+          path: development
 
       - name: Check for file changes
         id: filter
