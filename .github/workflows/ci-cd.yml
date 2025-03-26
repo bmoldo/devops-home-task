@@ -145,15 +145,9 @@ jobs:
           (github.event_name == 'pull_request' && ((github.base_ref == 'qa' && github.head_ref == 'development') || (github.base_ref == 'prod' && github.head_ref == 'qa')))
         )
       )
-    # Use a different runner
     runs-on: ubuntu-20.04
     environment: ${{ needs.determine-environment.outputs.environment }}
     steps:
-      - name: Checkout development branch if push, else default
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event_name == 'push' && github.ref == 'refs/heads/development' && 'development' || '' }}
-          fetch-depth: 0
 
       - name: Configure AWS credentials with Role
         uses: aws-actions/configure-aws-credentials@v2
