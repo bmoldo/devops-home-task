@@ -9,7 +9,7 @@ on:
       - 'docker-compose.yml'
       - 'app/**'
       - 'terraform/**'
-      - '.github\workflows\ci-cd.yml'
+      - '.github/workflows/ci-cd.yml'
   pull_request:
     # PRs for QA (from development) and PROD (from qa)
     branches: [ qa, prod ]
@@ -127,7 +127,7 @@ jobs:
           filters: |
             terraform:
               - 'terraform/**'
-              - '.github\workflows\ci-cd.yml'
+              - '.github/workflows/ci-cd.yml'
             lambda:
               - 'Dockerfile'
               - 'requirements.txt'
