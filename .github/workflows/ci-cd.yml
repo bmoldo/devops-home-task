@@ -113,8 +113,8 @@ jobs:
       - name: List Terraform Directory
         run: ls -la $GITHUB_WORKSPACE/terraform
     
-    - name: List Terraform Config Directory
-      run: ls -la $GITHUB_WORKSPACE/terraform/config
+      - name: List Terraform Config Directory
+        run: ls -la $GITHUB_WORKSPACE/terraform/config
     
 
   changes:
