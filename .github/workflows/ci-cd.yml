@@ -205,27 +205,25 @@ jobs:
       - name: Terraform Init
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
-          terraform -chdir=terraform/environments/$ENVIRONMENT init
-
+          cd terraform/environments/$ENVIRONMENT
+          terraform init
       - name: Terraform Format
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
-          terraform -chdir=terraform/environments/$ENVIRONMENT fmt -check -recursive
-
+          terraform fmt -check -recursive
       - name: Terraform Validate
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
-          terraform -chdir=terraform/environments/$ENVIRONMENT validate
-
+          cd terraform/environments/$ENVIRONMENT
+          terraform validate
       - name: Terraform Plan
         id: plan
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
-          TFVARS_FILE="${GITHUB_WORKSPACE}/terraform/config/${ENVIRONMENT}.tfvars"
-          # Debug: list the terraform config directory to verify the file exists
-          ls -la "${GITHUB_WORKSPACE}/terraform/config"
-          terraform -chdir=terraform/environments/$ENVIRONMENT plan -var-file="$TFVARS_FILE" -var="lambda_zip_path=../../../lambda_deployment_package.zip" -out=tfplan
-          terraform -chdir=terraform/environments/$ENVIRONMENT show -json tfplan > plan.json
+          TFVARS_FILE="${{ needs.determine-environment.outputs.tfvars_file }}"
+          cd terraform/environments/$ENVIRONMENT
+          terraform plan -var-file=$TFVARS_FILE -var="lambda_zip_path=../../../lambda_deployment_package.zip" -out=tfplan
+          terraform show -json tfplan > plan.json
 
       - name: Upload Plan Artifact
         uses: actions/upload-artifact@v4
