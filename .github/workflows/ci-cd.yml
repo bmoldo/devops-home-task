@@ -178,6 +178,8 @@ jobs:
       - name: Update backend configuration
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
+          mkdir -p terraform/environments/$ENVIRONMENT
+          echo "Overwriting backend config for $ENVIRONMENT"
           cat <<EOF > terraform/environments/$ENVIRONMENT/backend.tf
           terraform {
             backend "s3" {
@@ -285,6 +287,8 @@ jobs:
       - name: Update backend configuration
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
+          mkdir -p terraform/environments/$ENVIRONMENT
+          echo "Overwriting backend config for $ENVIRONMENT"
           cat <<EOF > terraform/environments/$ENVIRONMENT/backend.tf
           terraform {
             backend "s3" {
@@ -452,6 +456,8 @@ jobs:
       - name: Update backend configuration
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
+          mkdir -p terraform/environments/$ENVIRONMENT
+          echo "Overwriting backend config for $ENVIRONMENT"
           cat <<EOF > terraform/environments/$ENVIRONMENT/backend.tf
           terraform {
             backend "s3" {
@@ -520,6 +526,8 @@ jobs:
       - name: Update backend configuration
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
+          mkdir -p terraform/environments/$ENVIRONMENT
+          echo "Overwriting backend config for $ENVIRONMENT"
           cat <<EOF > terraform/environments/$ENVIRONMENT/backend.tf
           terraform {
             backend "s3" {
