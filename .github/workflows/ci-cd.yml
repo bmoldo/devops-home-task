@@ -116,11 +116,9 @@ jobs:
       lambda: ${{ steps.filter.outputs.lambda }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
-          clean: true
           fetch-depth: 0
-          path: development
 
       - name: Check for file changes
         id: filter
@@ -153,7 +151,7 @@ jobs:
     environment: ${{ needs.determine-environment.outputs.environment }}
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
           path: main
@@ -275,7 +273,7 @@ jobs:
       db_name: ${{ steps.outputs.outputs.db_name }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       - name: Configure AWS credentials with Role
         uses: aws-actions/configure-aws-credentials@v2
         with:
@@ -374,7 +372,7 @@ jobs:
       s3_lambda_key: ${{ steps.upload-lambda.outputs.s3_lambda_key }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
@@ -430,7 +428,7 @@ jobs:
     environment: ${{ needs.determine-environment.outputs.environment }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       - name: Configure AWS credentials with Role
         uses: aws-actions/configure-aws-credentials@v2
         with:
@@ -512,7 +510,7 @@ jobs:
     environment: ${{ needs.determine-environment.outputs.environment }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       - name: Configure AWS credentials with Role
         uses: aws-actions/configure-aws-credentials@v2
         with:
