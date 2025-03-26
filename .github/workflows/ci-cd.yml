@@ -196,9 +196,6 @@ jobs:
           }
           EOF
 
-      - name: Confirm branch
-        run: git branch --show-current
-
       - name: Terraform Init
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
