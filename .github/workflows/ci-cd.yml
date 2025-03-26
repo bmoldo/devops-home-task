@@ -70,7 +70,7 @@ jobs:
         run: |
           # Default to development
           ENVIRONMENT="dev"
-          TFVARS_FILE="../../config/${ENVIRONMENT}.tfvars"
+          TFVARS_FILE="../config/${ENVIRONMENT}.tfvars"
           
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             ENVIRONMENT="${{ github.event.inputs.environment }}"
