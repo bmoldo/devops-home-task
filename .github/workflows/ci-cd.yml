@@ -24,10 +24,10 @@ on:
       environment:
         description: 'Environment to deploy to'
         required: true
-        default: 'development'
+        default: 'dev'
         type: choice
         options:
-          - development
+          - dev
           - qa
           - prod
       run_infrastructure:
@@ -68,7 +68,7 @@ jobs:
         id: set-env
         run: |
           # Default to development
-          ENVIRONMENT="development"
+          ENVIRONMENT="dev"
           TFVARS_FILE="../../config/${ENVIRONMENT}.tfvars"
           
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
@@ -85,8 +85,8 @@ jobs:
             fi
           elif [[ "${{ github.event_name }}" == "push" ]]; then
             if [[ "${{ github.ref }}" == "refs/heads/development" ]]; then
-              ENVIRONMENT="development"
-              TFVARS_FILE="../../config/development.tfvars"
+              ENVIRONMENT="dev"
+              TFVARS_FILE="../../config/dev.tfvars"
             fi
           fi
           
