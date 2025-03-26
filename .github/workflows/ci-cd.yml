@@ -209,6 +209,10 @@ jobs:
           cd terraform/environments/$ENVIRONMENT
           terraform validate
 
+      - name: Debug directory structure
+        run: ls -R terraform/environments
+        
+
       - name: Terraform Plan
         id: plan
         run: |
