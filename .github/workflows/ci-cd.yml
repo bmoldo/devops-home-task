@@ -2,33 +2,37 @@ name: Infrastructure Pipeline
 
 on:
   push:
-    branches: [ development ]
+    branches: [ development, qa ]
     paths:
-      - 'Dockerfile'
-      - 'requirements.txt'
-      - 'docker-compose.yml'
       - 'app/**'
       - 'terraform/**'
+      - 'requirements.txt'
+      - 'Dockerfile'
+      - 'setup.py'
       - '.github/workflows/ci-cd.yml'
+      - 'lambda_handler.py'
+      - 'create_lambda_package.sh'
   pull_request:
-    # PRs for QA (from development) and PROD (from qa)
-    branches: [ qa, prod ]
-    types: [ opened, synchronize, reopened, closed ]
+    branches: [ main ]
+    types: [ closed ]
     paths:
-      - 'Dockerfile'
-      - 'requirements.txt'
-      - 'docker-compose.yml'
       - 'app/**'
       - 'terraform/**'
+      - 'requirements.txt'
+      - 'Dockerfile'
+      - 'setup.py'
+      - '.github/workflows/ci-cd.yml'
+      - 'lambda_handler.py'
+      - 'create_lambda_package.sh'
   workflow_dispatch:
     inputs:
       environment:
         description: 'Environment to deploy to'
         required: true
-        default: 'development'
+        default: 'dev'
         type: choice
         options:
-          - development
+          - dev
           - qa
           - prod
       run_infrastructure:
@@ -65,30 +69,25 @@ jobs:
       environment: ${{ steps.set-env.outputs.environment }}
       tfvars_file: ${{ steps.set-env.outputs.tfvars_file }}
     steps:
-      - name: Set environment based on branch/PR or input
+      - name: Set environment based on branch, PR or input
         id: set-env
         run: |
-          # Default to development
-          ENVIRONMENT="development"
+          # Default to dev
+          ENVIRONMENT="dev"
           TFVARS_FILE="../../config/${ENVIRONMENT}.tfvars"
           
+          # If workflow_dispatch, use the input
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             ENVIRONMENT="${{ github.event.inputs.environment }}"
             TFVARS_FILE="../../config/${ENVIRONMENT}.tfvars"
-          elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            # For PRs, use base branch as target
-            if [[ "${{ github.base_ref }}" == "qa" ]]; then
-              ENVIRONMENT="qa"
-              TFVARS_FILE="../../config/qa.tfvars"
-            elif [[ "${{ github.base_ref }}" == "prod" ]]; then
-              ENVIRONMENT="prod"
-              TFVARS_FILE="../../config/prod.tfvars"
-            fi
-          elif [[ "${{ github.event_name }}" == "push" ]]; then
-            if [[ "${{ github.ref }}" == "refs/heads/development" ]]; then
-              ENVIRONMENT="development"
-              TFVARS_FILE="../../config/development.tfvars"
-            fi
+          # For pull request to main that's merged, use prod
+          elif [[ "${{ github.event_name }}" == "pull_request" && "${{ github.event.pull_request.merged }}" == "true" && "${{ github.base_ref }}" == "main" ]]; then
+            ENVIRONMENT="prod"
+            TFVARS_FILE="../../config/prod.tfvars"
+          # Otherwise determine from branch
+          elif [[ "${{ github.ref }}" == "refs/heads/qa" ]]; then
+            ENVIRONMENT="qa"
+            TFVARS_FILE="../../config/qa.tfvars"
           fi
           
           echo "environment=$ENVIRONMENT" >> $GITHUB_OUTPUT
@@ -103,13 +102,12 @@ jobs:
           aws-region: us-east-1
 
   changes:
-    name: Detect File Changes
+    name: Detect Changes
     runs-on: ubuntu-latest
     outputs:
       terraform: ${{ steps.filter.outputs.terraform }}
-      lambda: ${{ steps.filter.outputs.lambda }}
+      app: ${{ steps.filter.outputs.app }}
     steps:
-    
       - name: Checkout code
         uses: actions/checkout@v3
         with:
@@ -122,40 +120,36 @@ jobs:
           filters: |
             terraform:
               - 'terraform/**'
-              - '.github/workflows/ci-cd.yml'
-            lambda:
+            app:
+              - 'app/**'
               - 'Dockerfile'
               - 'requirements.txt'
-              - 'docker-compose.yml'
-              - 'app/**'
+              - 'setup.py'
+              - 'lambda_handler.py'
+              - 'create_lambda_package.sh'
 
   terraform-plan:
     name: Terraform Plan
     needs: [determine-environment, changes]
-    if: |
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.run_infrastructure == 'true' && github.event.inputs.destroy_infrastructure == 'false') ||
-      (
-        github.event_name != 'workflow_dispatch' &&
-        needs.changes.outputs.terraform == 'true' &&
-        (
-          (github.event_name == 'push' && github.ref == 'refs/heads/development') ||
-          (github.event_name == 'pull_request' && ((github.base_ref == 'qa' && github.head_ref == 'development') || (github.base_ref == 'prod' && github.head_ref == 'qa')))
-        )
-      )
+    # Run for all branches, including PRs to main
+    if: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.run_infrastructure == 'true' && github.event.inputs.destroy_infrastructure == 'false') || (github.event_name != 'workflow_dispatch' && needs.changes.outputs.terraform == 'true') }}
     runs-on: ubuntu-latest
     environment: ${{ needs.determine-environment.outputs.environment }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
+
       - name: Configure AWS credentials with Role
         uses: aws-actions/configure-aws-credentials@v2
         with:
           role-to-assume: arn:aws:iam::070503547773:role/GitHubActionsRole
           aws-region: us-east-1
+
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: 1.5.0
+
       - name: Check for S3 state bucket
         id: check_s3_bucket
         run: |
@@ -168,6 +162,14 @@ jobs:
             echo "create_bucket=false" >> $GITHUB_OUTPUT
             echo "bucket_name=$BUCKET_NAME" >> $GITHUB_OUTPUT
           fi
+
+      - name: Create S3 state bucket if not exists
+        if: steps.check_s3_bucket.outputs.create_bucket == 'true'
+        run: |
+          aws s3api create-bucket --bucket ${{ steps.check_s3_bucket.outputs.bucket_name }} --region us-east-1
+          aws s3api put-bucket-versioning --bucket ${{ steps.check_s3_bucket.outputs.bucket_name }} --versioning-configuration Status=Enabled
+          aws s3api put-bucket-encryption --bucket ${{ steps.check_s3_bucket.outputs.bucket_name }} --server-side-encryption-configuration '{"Rules": [{"ApplyServerSideEncryptionByDefault": {"SSEAlgorithm": "AES256"}}]}'
+
       - name: Create valid placeholder Lambda ZIP
         run: |
           echo "Creating valid placeholder Lambda ZIP for planning"
@@ -176,6 +178,7 @@ jobs:
           cd placeholder_lambda
           zip -r ../lambda_deployment_package.zip .
           cd ..
+
       - name: Update backend configuration
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
@@ -188,34 +191,41 @@ jobs:
             }
           }
           EOF
+
       - name: Terraform Init
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
           cd terraform/environments/$ENVIRONMENT
           terraform init
+
       - name: Terraform Format
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
           terraform fmt -check -recursive
+
       - name: Terraform Validate
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
           cd terraform/environments/$ENVIRONMENT
           terraform validate
+
       - name: Terraform Plan
         id: plan
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
           TFVARS_FILE="${{ needs.determine-environment.outputs.tfvars_file }}"
+          
           cd terraform/environments/$ENVIRONMENT
           terraform plan -var-file=$TFVARS_FILE -var="lambda_zip_path=../../../lambda_deployment_package.zip" -out=tfplan
           terraform show -json tfplan > plan.json
+      
       - name: Upload Plan Artifact
         uses: actions/upload-artifact@v4
         with:
           name: terraform-${{ needs.determine-environment.outputs.environment }}-plan
           path: terraform/environments/${{ needs.determine-environment.outputs.environment }}/plan.json
           retention-days: 5
+          
       - name: Comment Plan on PR
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v6
@@ -225,6 +235,7 @@ jobs:
             const fs = require('fs');
             const environment = '${{ needs.determine-environment.outputs.environment }}';
             const planSummary = fs.readFileSync('terraform/environments/' + environment + '/tfplan', 'utf8');
+            
             github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
@@ -236,16 +247,14 @@ jobs:
   terraform-apply:
     name: Terraform Apply Infrastructure
     needs: [determine-environment, terraform-plan]
+    # Only run apply on:
+    # 1. Direct pushes to development/qa branches
+    # 2. Approved and merged PRs to main
+    # 3. Manual workflow runs
     if: |
       (github.event_name == 'workflow_dispatch' && github.event.inputs.run_infrastructure == 'true') ||
-      (
-        github.event_name != 'workflow_dispatch' &&
-        needs.changes.outputs.terraform == 'true' &&
-        (
-          (github.event_name == 'push' && github.ref == 'refs/heads/development') ||
-          (github.event_name == 'pull_request' && ((github.base_ref == 'qa' && github.head_ref == 'development') || (github.base_ref == 'prod' && github.head_ref == 'qa')))
-        )
-      )
+      (github.event_name == 'push' && (github.ref == 'refs/heads/development' || github.ref == 'refs/heads/qa')) || 
+      (github.event_name == 'pull_request' && github.event.pull_request.merged == true && github.base_ref == 'main')
     runs-on: ubuntu-latest
     environment: ${{ needs.determine-environment.outputs.environment }}
     outputs:
@@ -254,15 +263,18 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
+
       - name: Configure AWS credentials with Role
         uses: aws-actions/configure-aws-credentials@v2
         with:
           role-to-assume: arn:aws:iam::070503547773:role/GitHubActionsRole
           aws-region: us-east-1
+
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: 1.5.0
+
       - name: Check for S3 state bucket
         id: check_s3_bucket
         run: |
@@ -275,6 +287,7 @@ jobs:
             echo "create_bucket=false" >> $GITHUB_OUTPUT
             echo "bucket_name=$BUCKET_NAME" >> $GITHUB_OUTPUT
           fi
+
       - name: Create valid placeholder Lambda ZIP
         run: |
           echo "Creating valid placeholder Lambda ZIP for deployment"
@@ -283,6 +296,7 @@ jobs:
           cd placeholder_lambda
           zip -r ../lambda_deployment_package.zip .
           cd ..
+
       - name: Update backend configuration
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
@@ -295,56 +309,58 @@ jobs:
             }
           }
           EOF
+
       - name: Terraform Init
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
           cd terraform/environments/$ENVIRONMENT
           terraform init
+
       - name: Download Plan
         uses: actions/download-artifact@v4
         with:
           name: terraform-${{ needs.determine-environment.outputs.environment }}-plan
           path: terraform/environments/${{ needs.determine-environment.outputs.environment }}/
+
       - name: Terraform Apply
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
           TFVARS_FILE="${{ needs.determine-environment.outputs.tfvars_file }}"
+          
           cd terraform/environments/$ENVIRONMENT
           terraform apply -auto-approve -var-file=$TFVARS_FILE -var="lambda_zip_path=../../../lambda_deployment_package.zip"
+        
       - name: Get Terraform Outputs
         id: outputs
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
           cd terraform/environments/$ENVIRONMENT
+          
+          # Save the outputs to a file first
           terraform output > terraform_outputs.txt
+          
+          # Process the file safely
           if grep -q "rds_endpoint" terraform_outputs.txt; then
             DB_HOST=$(terraform output -raw rds_endpoint 2>/dev/null | tr -d '\n')
           else
             echo "Warning: rds_endpoint output not found, using empty value"
             DB_HOST=""
           fi
+          
           if grep -q "db_name" terraform_outputs.txt; then
             DB_NAME=$(terraform output -raw db_name 2>/dev/null | tr -d '\n')
           else
             echo "Warning: db_name output not found, using empty value"
             DB_NAME=""
           fi
+          
           echo "db_host=${DB_HOST}" >> $GITHUB_OUTPUT
           echo "db_name=${DB_NAME}" >> $GITHUB_OUTPUT
 
   build-lambda-package:
     name: Build Lambda Package
     needs: [determine-environment, terraform-plan, terraform-apply]
-    if: |
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.build_and_deploy == 'true' && github.event.inputs.destroy_infrastructure == 'false') ||
-      (
-        github.event_name != 'workflow_dispatch' &&
-        needs.changes.outputs.lambda == 'true' &&
-        (
-          (github.event_name == 'push' && github.ref == 'refs/heads/development') ||
-          (github.event_name == 'pull_request' && ((github.base_ref == 'qa' && github.head_ref == 'development') || (github.base_ref == 'prod' && github.head_ref == 'qa')))
-        )
-      )
+    if: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.build_and_deploy == 'true' && github.event.inputs.destroy_infrastructure == 'false') || (github.event_name != 'workflow_dispatch' && needs.changes.outputs.app == 'true') }}
     runs-on: ubuntu-latest
     outputs:
       lambda_package_path: ${{ steps.create-lambda-package.outputs.lambda_package_path }}
@@ -352,23 +368,28 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
+
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
           cache: 'pip'
+
       - name: Update script permissions
         run: chmod +x create_lambda_package.sh
+
       - name: Create Lambda deployment package
         id: create-lambda-package
         run: |
           ./create_lambda_package.sh
           echo "lambda_package_path=lambda_deployment_package.zip" >> $GITHUB_OUTPUT
+
       - name: Configure AWS credentials with Role
         uses: aws-actions/configure-aws-credentials@v2
         with:
           role-to-assume: arn:aws:iam::070503547773:role/GitHubActionsRole
           aws-region: us-east-1
+
       - name: Upload Lambda package to S3
         id: upload-lambda
         run: |
@@ -377,11 +398,17 @@ jobs:
           TIMESTAMP=$(date +%Y%m%d%H%M%S)
           S3_KEY="lambda/lambda_deployment_package_${TIMESTAMP}.zip"
           S3_BUCKET="lambda-packages-${ENVIRONMENT}-${ACCOUNT_ID}"
+          
+          # Check if bucket exists (should be created by Terraform)
           if ! aws s3api head-bucket --bucket $S3_BUCKET 2>/dev/null; then
             echo "Error: Lambda zip bucket doesn't exist. Infrastructure may not be deployed yet."
             exit 1
           fi
+          
+          # Upload to S3
           aws s3 cp lambda_deployment_package.zip s3://$S3_BUCKET/$S3_KEY
+          
+          # Verify upload
           if aws s3 ls s3://$S3_BUCKET/$S3_KEY; then
             echo "Lambda package uploaded successfully to s3://$S3_BUCKET/$S3_KEY"
             echo "s3_lambda_key=$S3_KEY" >> $GITHUB_OUTPUT
@@ -395,28 +422,25 @@ jobs:
     needs: [determine-environment, build-lambda-package, terraform-apply]
     if: |
       (github.event_name == 'workflow_dispatch' && github.event.inputs.build_and_deploy == 'true') ||
-      (
-        github.event_name != 'workflow_dispatch' &&
-        needs.changes.outputs.lambda == 'true' &&
-        (
-          (github.event_name == 'push' && github.ref == 'refs/heads/development') ||
-          (github.event_name == 'pull_request' && ((github.base_ref == 'qa' && github.head_ref == 'development') || (github.base_ref == 'prod' && github.head_ref == 'qa')))
-        )
-      )
+      (github.event_name == 'push' && (github.ref == 'refs/heads/development' || github.ref == 'refs/heads/qa') && needs.changes.outputs.app == 'true') || 
+      (github.event_name == 'pull_request' && github.event.pull_request.merged == true && github.base_ref == 'main' && needs.changes.outputs.app == 'true')
     runs-on: ubuntu-latest
     environment: ${{ needs.determine-environment.outputs.environment }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
+      
       - name: Configure AWS credentials with Role
         uses: aws-actions/configure-aws-credentials@v2
         with:
           role-to-assume: arn:aws:iam::070503547773:role/GitHubActionsRole
           aws-region: us-east-1
+
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: 1.5.0
+
       - name: Check for S3 state bucket
         id: check_s3_bucket
         run: |
@@ -429,19 +453,23 @@ jobs:
             echo "create_bucket=false" >> $GITHUB_OUTPUT
             echo "bucket_name=$BUCKET_NAME" >> $GITHUB_OUTPUT
           fi
+
       - name: Create Lambda S3 variables file
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
           ACCOUNT_ID="070503547773"
           S3_BUCKET="lambda-packages-${ENVIRONMENT}-${ACCOUNT_ID}"
           S3_KEY="${{ needs.build-lambda-package.outputs.s3_lambda_key }}"
+          
           cat > terraform/environments/$ENVIRONMENT/lambda_vars.auto.tfvars <<EOF
           use_s3_source = true
           s3_bucket = "$S3_BUCKET"
           s3_key = "$S3_KEY"
           EOF
+          
           echo "Created lambda_vars.auto.tfvars:"
           cat terraform/environments/$ENVIRONMENT/lambda_vars.auto.tfvars
+
       - name: Create placeholder zip file
         run: |
           echo "Creating placeholder zip for Terraform"
@@ -450,6 +478,7 @@ jobs:
           cd placeholder
           zip -r ../lambda_deployment_package.zip .
           cd ..
+
       - name: Update backend configuration
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
@@ -462,11 +491,13 @@ jobs:
             }
           }
           EOF
+
       - name: Terraform Init
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
           cd terraform/environments/$ENVIRONMENT
           terraform init
+
       - name: Terraform Apply with Lambda package
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
@@ -474,30 +505,383 @@ jobs:
           TFVARS_FILE="${{ needs.determine-environment.outputs.tfvars_file }}"
           S3_BUCKET="lambda-packages-${ENVIRONMENT}-${ACCOUNT_ID}"
           S3_KEY="${{ needs.build-lambda-package.outputs.s3_lambda_key }}"
+      
           cd terraform/environments/$ENVIRONMENT
           terraform apply -auto-approve \
             -var-file=$TFVARS_FILE \
             -var="s3_bucket=$S3_BUCKET" \
             -var="s3_key=$S3_KEY"
 
+  test-app:
+    name: Test Application
+    needs: [determine-environment, terraform-apply, update-lambda]
+    if: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.run_tests == 'true' && github.event.inputs.destroy_infrastructure == 'false') || (github.event_name != 'workflow_dispatch' && needs.changes.outputs.app == 'true') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: arn:aws:iam::070503547773:role/GitHubActionsRole
+          aws-region: us-east-1
+
+      - name: Get Lambda function name
+        id: get-lambda
+        run: |
+          ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
+          LAMBDA_FUNCTION_NAME="user-api-${ENVIRONMENT}"
+          
+          echo "function_name=$LAMBDA_FUNCTION_NAME" >> $GITHUB_OUTPUT
+          echo "Using Lambda function: $LAMBDA_FUNCTION_NAME"
+
+      - name: Create test events
+        run: |
+          # Healthcheck event
+          cat > healthcheck_event.json << EOF
+          {
+            "httpMethod": "GET",
+            "path": "/healthcheck",
+            "resource": "/healthcheck",
+            "headers": {
+              "Content-Type": "application/json"
+            },
+            "queryStringParameters": null,
+            "pathParameters": null,
+            "body": null,
+            "isBase64Encoded": false
+          }
+          EOF
+          
+          # Populate users event
+          cat > populate_event.json << EOF
+          {
+            "httpMethod": "POST",
+            "path": "/populate",
+            "resource": "/populate",
+            "headers": {
+              "Content-Type": "application/json"
+            },
+            "queryStringParameters": {
+              "count": "3",
+              "unique": "$(uuidgen)"
+            },
+            "pathParameters": null,
+            "body": null,
+            "isBase64Encoded": false
+          }
+          EOF
+          
+          # Get users event
+          cat > get_users_event.json << EOF
+          {
+            "httpMethod": "GET",
+            "path": "/users",
+            "resource": "/users",
+            "headers": {
+              "Content-Type": "application/json"
+            },
+            "queryStringParameters": null,
+            "pathParameters": null,
+            "body": null,
+            "isBase64Encoded": false
+          }
+          EOF
+          
+          # Get users with filters event
+          cat > get_users_filtered_event.json << EOF
+          {
+            "httpMethod": "GET",
+            "path": "/users",
+            "resource": "/users",
+            "headers": {
+              "Content-Type": "application/json"
+            },
+            "queryStringParameters": {
+              "min_age": "25",
+              "max_age": "40"
+            },
+            "pathParameters": null,
+            "body": null,
+            "isBase64Encoded": false
+          }
+          EOF
+
+      - name: Test healthcheck endpoint
+        run: |
+          FUNCTION_NAME="${{ steps.get-lambda.outputs.function_name }}"
+          echo "Testing healthcheck endpoint with function: $FUNCTION_NAME"
+          
+          aws lambda invoke \
+            --function-name $FUNCTION_NAME \
+            --payload file://healthcheck_event.json \
+            --cli-binary-format raw-in-base64-out \
+            healthcheck_response.json
+          
+          # Print the response
+          echo "Response from Lambda:"
+          cat healthcheck_response.json
+          
+          # Verify response contains healthy status
+          if grep -q "healthy" healthcheck_response.json; then
+            echo "✅ Healthcheck test passed"
+          else
+            echo "❌ Healthcheck test failed"
+            exit 1
+          fi
+
+      - name: Test populate endpoint
+        run: |
+          FUNCTION_NAME="${{ steps.get-lambda.outputs.function_name }}"
+          echo "Testing populate endpoint with function: $FUNCTION_NAME"
+          
+          aws lambda invoke \
+            --function-name $FUNCTION_NAME \
+            --payload file://populate_event.json \
+            --cli-binary-format raw-in-base64-out \
+            populate_response.json
+          
+          # Print the response
+          echo "Response from Lambda:"
+          cat populate_response.json
+          
+          # Verify response indicates users were created
+          if grep -q "Created" populate_response.json; then
+            echo "✅ Populate test passed"
+          else
+            echo "❌ Populate test failed"
+            exit 1
+          fi
+
+      - name: Test get users endpoint
+        run: |
+          FUNCTION_NAME="${{ steps.get-lambda.outputs.function_name }}"
+          echo "Testing get users endpoint with function: $FUNCTION_NAME"
+          
+          aws lambda invoke \
+            --function-name $FUNCTION_NAME \
+            --payload file://get_users_event.json \
+            --cli-binary-format raw-in-base64-out \
+            get_users_response.json
+          
+          # Print the response size
+          echo "Response size: $(wc -c < get_users_response.json) bytes"
+          
+          # Check response structure without printing the whole response
+          if grep -q "users" get_users_response.json && grep -q "count" get_users_response.json && grep -q "s3_file" get_users_response.json; then
+            echo "✅ Get users test passed"
+          else
+            echo "❌ Get users test failed"
+            exit 1
+          fi
+
+      - name: Test filtered users endpoint
+        run: |
+          FUNCTION_NAME="${{ steps.get-lambda.outputs.function_name }}"
+          echo "Testing filtered users endpoint with function: $FUNCTION_NAME"
+          
+          aws lambda invoke \
+            --function-name $FUNCTION_NAME \
+            --payload file://get_users_filtered_event.json \
+            --cli-binary-format raw-in-base64-out \
+            get_users_filtered_response.json
+          
+          # Print the response size
+          echo "Response size: $(wc -c < get_users_filtered_response.json) bytes"
+          
+          # Check response structure without printing the whole response
+          if grep -q "users" get_users_filtered_response.json && grep -q "count" get_users_filtered_response.json; then
+            echo "✅ Filtered users test passed"
+          else
+            echo "❌ Filtered users test failed"
+            exit 1
+          fi
+
+      - name: Test delete user (if users exist)
+        run: |
+          FUNCTION_NAME="${{ steps.get-lambda.outputs.function_name }}"
+          
+          # Get a user to delete
+          USER_COUNT=$(grep -o '"count":[0-9]*' get_users_response.json | awk -F: '{print $2}')
+          echo "Found $USER_COUNT users"
+          
+          if [ "$USER_COUNT" -gt "0" ]; then
+            # Extract first user ID from the response
+            USER_ID=$(grep -o '"id":[0-9]*' get_users_response.json | head -1 | awk -F: '{print $2}')
+            
+            if [ -n "$USER_ID" ]; then
+              echo "Testing delete user endpoint for user ID: $USER_ID"
+              
+              # Create delete event
+              cat > delete_user_event.json << EOF
+              {
+                "httpMethod": "DELETE",
+                "path": "/users/$USER_ID",
+                "resource": "/users/{user_id}",
+                "headers": {
+                  "Content-Type": "application/json"
+                },
+                "pathParameters": {
+                  "user_id": "$USER_ID"
+                },
+                "body": null,
+                "isBase64Encoded": false
+              }
+              EOF
+              
+              # Invoke Lambda
+              aws lambda invoke \
+                --function-name $FUNCTION_NAME \
+                --payload file://delete_user_event.json \
+                --cli-binary-format raw-in-base64-out \
+                delete_user_response.json
+              
+              # Print the response
+              echo "Response from Lambda:"
+              cat delete_user_response.json
+              
+              # Verify user was deleted
+              if grep -q "deleted" delete_user_response.json; then
+                echo "✅ Delete user test passed"
+              else
+                echo "❌ Delete user test failed"
+                exit 1
+              fi
+            else
+              echo "Could not extract user ID from response, skipping delete test"
+            fi
+          else
+            echo "No users found, skipping delete test"
+          fi
+
+      - name: Generate test report
+        run: |
+          # Create a simple test report
+          cat > test-report.md << EOF
+          # Lambda Function Tests - ${{ needs.determine-environment.outputs.environment }} environment
+          
+          Tests executed on: $(date)
+          Lambda function: ${{ steps.get-lambda.outputs.function_name }}
+          
+          ## Test Results
+          
+          | Endpoint | Status | Result |
+          |----------|--------|--------|
+          | /healthcheck | ✅ Passed | $(grep -q "healthy" healthcheck_response.json && echo "API is healthy" || echo "Failed") |
+          | /populate | ✅ Passed | $(grep -q "Created" populate_response.json && echo "Users created successfully" || echo "Failed") |
+          | /users | ✅ Passed | $(grep -q "users" get_users_response.json && echo "Retrieved users successfully" || echo "Failed") |
+          | /users (filtered) | ✅ Passed | $(grep -q "users" get_users_filtered_response.json && echo "Filtered users successfully" || echo "Failed") |
+          | /users/{user_id} | $([ -f delete_user_response.json ] && grep -q "deleted" delete_user_response.json && echo "✅ Passed" || echo "⏭️ Skipped") | $([ -f delete_user_response.json ] && grep -q "deleted" delete_user_response.json && echo "User deleted successfully" || echo "Test not executed") |
+          
+          All tests completed successfully!
+          EOF
+
+      - name: Upload test report
+        uses: actions/upload-artifact@v4
+        with:
+          name: lambda-test-report-${{ needs.determine-environment.outputs.environment }}
+          path: |
+            test-report.md
+            *_response.json
+          retention-days: 5
+
+      - name: Notify on test completion
+        if: always()
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const { issue, repo } = context;
+            const status = '${{ job.status }}' === 'success' ? '✅ Passed' : '❌ Failed';
+            
+            if (context.payload.pull_request) {
+              github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: `## Lambda Function Tests for ${{ needs.determine-environment.outputs.environment }} environment: ${status}\n\nSee details in the [workflow run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})`
+              });
+            }
+
+      - name: Test get users endpoint and verify S3 storage
+        run: |
+          FUNCTION_NAME="${{ steps.get-lambda.outputs.function_name }}"
+          S3_BUCKET_NAME="user-api-${{ needs.determine-environment.outputs.environment }}"
+          echo "Testing get users endpoint with function: $FUNCTION_NAME and verifying S3 storage in bucket: $S3_BUCKET_NAME"
+          
+          # Invoke Lambda
+          aws lambda invoke \
+            --function-name $FUNCTION_NAME \
+            --payload file://get_users_event.json \
+            --cli-binary-format raw-in-base64-out \
+            get_users_response.json
+          
+          # Print the response size
+          echo "Response size: $(wc -c < get_users_response.json) bytes"
+          
+          # Extract the S3 file path from the response
+          S3_FILE=$(grep -o '"s3_file":"[^"]*"' get_users_response.json | sed 's/"s3_file":"//g' | sed 's/"//g')
+          
+          if [ -z "$S3_FILE" ]; then
+            echo "❌ No S3 file found in response"
+            exit 1
+          else
+            echo "Found S3 file reference: $S3_FILE"
+            
+            # Check if the file exists in the S3 bucket
+            if aws s3api head-object --bucket $S3_BUCKET_NAME --key $S3_FILE &> /dev/null; then
+              echo "✅ S3 file exists in bucket"
+              
+              # Download the S3 file for inspection
+              aws s3 cp s3://$S3_BUCKET_NAME/$S3_FILE s3_content.json
+              
+              # Verify the S3 file structure
+              if grep -q "query_parameters" s3_content.json && grep -q "results" s3_content.json; then
+                echo "✅ S3 file has correct structure"
+                
+                # Print some key information without revealing all data
+                echo "S3 file metadata:"
+                grep "timestamp\|result_count" s3_content.json
+              else
+                echo "❌ S3 file is missing expected structure"
+                exit 1
+              fi
+            else
+              echo "❌ S3 file does not exist in bucket"
+              exit 1
+            fi
+          fi
+          
+          # Check response structure 
+          if grep -q "users" get_users_response.json && grep -q "count" get_users_response.json && grep -q "s3_file" get_users_response.json; then
+            echo "✅ Get users test passed"
+          else
+            echo "❌ Get users test failed"
+            exit 1
+          fi          
+
   terraform-destroy:
     name: Terraform Destroy Infrastructure
     needs: [determine-environment]
+    # Only run when manually triggered with destroy_infrastructure=true
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.destroy_infrastructure == true
     runs-on: ubuntu-latest
     environment: ${{ needs.determine-environment.outputs.environment }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
+
       - name: Configure AWS credentials with Role
         uses: aws-actions/configure-aws-credentials@v2
         with:
           role-to-assume: arn:aws:iam::070503547773:role/GitHubActionsRole
           aws-region: us-east-1
+
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: 1.5.0
+
       - name: Create placeholder zip for destroy
         run: |
           echo "Creating placeholder Lambda ZIP for destroy operation"
@@ -506,6 +890,7 @@ jobs:
           cd placeholder
           zip -r ../lambda_deployment_package.zip .
           cd ..
+
       - name: Check for S3 state bucket
         id: check_s3_bucket
         run: |
@@ -518,6 +903,7 @@ jobs:
             echo "create_bucket=false" >> $GITHUB_OUTPUT
             echo "bucket_name=$BUCKET_NAME" >> $GITHUB_OUTPUT
           fi
+
       - name: Update backend configuration
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
@@ -530,14 +916,20 @@ jobs:
             }
           }
           EOF
+
       - name: Terraform Init
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
           cd terraform/environments/$ENVIRONMENT
           terraform init
+
+      # Removing the plan step to simplify the workflow
+      # Directly applying destroy with auto-approve
+
       - name: Terraform Destroy
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
           TFVARS_FILE="${{ needs.determine-environment.outputs.tfvars_file }}"
+          
           cd terraform/environments/$ENVIRONMENT
           terraform destroy -auto-approve -var-file=$TFVARS_FILE -var="lambda_zip_path=../../../lambda_deployment_package.zip"
