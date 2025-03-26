@@ -9,7 +9,6 @@ on:
       - 'docker-compose.yml'
       - 'app/**'
       - 'terraform/**'
-      - '.github/workflows/ci-cd.yml'
   pull_request:
     # PRs for QA (from development) and PROD (from qa)
     branches: [ qa, prod ]
@@ -25,10 +24,10 @@ on:
       environment:
         description: 'Environment to deploy to'
         required: true
-        default: 'dev'
+        default: 'development'
         type: choice
         options:
-          - dev
+          - development
           - qa
           - prod
       run_infrastructure:
@@ -68,30 +67,26 @@ jobs:
       - name: Set environment based on branch/PR or input
         id: set-env
         run: |
-          # Default to dev
-          ENVIRONMENT="dev"
-          TFVARS_FILE="${GITHUB_WORKSPACE}/terraform/config/dev.tfvars"
+          # Default to development
+          ENVIRONMENT="development"
+          TFVARS_FILE="../../config/${ENVIRONMENT}.tfvars"
           
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            if [[ "${{ github.event.inputs.environment }}" == "development" || "${{ github.event.inputs.environment }}" == "dev" ]]; then
-              ENVIRONMENT="dev"
-              TFVARS_FILE="${GITHUB_WORKSPACE}/terraform/config/dev.tfvars"
-            else
-              ENVIRONMENT="${{ github.event.inputs.environment }}"
-              TFVARS_FILE="${GITHUB_WORKSPACE}/terraform/config/${ENVIRONMENT}.tfvars"
-            fi
+            ENVIRONMENT="${{ github.event.inputs.environment }}"
+            TFVARS_FILE="../../config/${ENVIRONMENT}.tfvars"
           elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            # For PRs, use base branch as target
             if [[ "${{ github.base_ref }}" == "qa" ]]; then
               ENVIRONMENT="qa"
-              TFVARS_FILE="${GITHUB_WORKSPACE}/terraform/config/qa.tfvars"
+              TFVARS_FILE="../../config/qa.tfvars"
             elif [[ "${{ github.base_ref }}" == "prod" ]]; then
               ENVIRONMENT="prod"
-              TFVARS_FILE="${GITHUB_WORKSPACE}/terraform/config/prod.tfvars"
+              TFVARS_FILE="../../config/prod.tfvars"
             fi
           elif [[ "${{ github.event_name }}" == "push" ]]; then
             if [[ "${{ github.ref }}" == "refs/heads/development" ]]; then
-              ENVIRONMENT="dev"
-              TFVARS_FILE="${GITHUB_WORKSPACE}/terraform/config/dev.tfvars"
+              ENVIRONMENT="development"
+              TFVARS_FILE="../../config/development.tfvars"
             fi
           fi
           
@@ -100,12 +95,12 @@ jobs:
           echo "Selected environment: $ENVIRONMENT"
           echo "Selected tfvars file: $TFVARS_FILE"
 
-
       - name: Configure AWS credentials with Role
         uses: aws-actions/configure-aws-credentials@v2
         with:
           role-to-assume: arn:aws:iam::070503547773:role/GitHubActionsRole
           aws-region: us-east-1
+    
 
   changes:
     name: Detect File Changes
@@ -115,7 +110,7 @@ jobs:
       lambda: ${{ steps.filter.outputs.lambda }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
         with:
           fetch-depth: 0
 
@@ -126,7 +121,6 @@ jobs:
           filters: |
             terraform:
               - 'terraform/**'
-              - '.github/workflows/ci-cd.yml'
             lambda:
               - 'Dockerfile'
               - 'requirements.txt'
@@ -146,25 +140,21 @@ jobs:
           (github.event_name == 'pull_request' && ((github.base_ref == 'qa' && github.head_ref == 'development') || (github.base_ref == 'prod' && github.head_ref == 'qa')))
         )
       )
-    runs-on: ubuntu-latest
+    # Switch to a different runner image
+    runs-on: ubuntu-20.04
     environment: ${{ needs.determine-environment.outputs.environment }}
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
+      - name: Checkout code
+        uses: actions/checkout@v3
       - name: Configure AWS credentials with Role
         uses: aws-actions/configure-aws-credentials@v2
         with:
           role-to-assume: arn:aws:iam::070503547773:role/GitHubActionsRole
           aws-region: us-east-1
-
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: 1.5.0
-
       - name: Check for S3 state bucket
         id: check_s3_bucket
         run: |
@@ -177,21 +167,18 @@ jobs:
             echo "create_bucket=false" >> $GITHUB_OUTPUT
             echo "bucket_name=$BUCKET_NAME" >> $GITHUB_OUTPUT
           fi
-
       - name: Create valid placeholder Lambda ZIP
         run: |
           echo "Creating valid placeholder Lambda ZIP for planning"
-          mkdir -p "${GITHUB_WORKSPACE}/placeholder_lambda"
-          echo 'def lambda_handler(event, context): return {"statusCode": 200, "body": "Placeholder Lambda function"}' > "${GITHUB_WORKSPACE}/placeholder_lambda/lambda_handler.py"
-          cd "${GITHUB_WORKSPACE}/placeholder_lambda"
+          mkdir -p placeholder_lambda
+          echo 'def lambda_handler(event, context): return {"statusCode": 200, "body": "Placeholder Lambda function"}' > placeholder_lambda/lambda_handler.py
+          cd placeholder_lambda
           zip -r ../lambda_deployment_package.zip .
-          cd "${GITHUB_WORKSPACE}"
-
+          cd ..
       - name: Update backend configuration
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
-          mkdir -p "${GITHUB_WORKSPACE}/terraform/environments/$ENVIRONMENT"
-          cat <<EOF > "${GITHUB_WORKSPACE}/terraform/environments/$ENVIRONMENT/backend.tf"
+          cat <<EOF > terraform/environments/$ENVIRONMENT/backend.tf
           terraform {
             backend "s3" {
               bucket = "${{ steps.check_s3_bucket.outputs.bucket_name }}"
@@ -203,36 +190,33 @@ jobs:
       - name: Terraform Init
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
-          cd "${GITHUB_WORKSPACE}/terraform/environments/$ENVIRONMENT"
+          cd terraform/environments/$ENVIRONMENT
           terraform init
-
       - name: Terraform Format
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
           terraform fmt -check -recursive
-
       - name: Terraform Validate
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
-          cd "${GITHUB_WORKSPACE}/terraform/environments/$ENVIRONMENT"
+          cd terraform/environments/$ENVIRONMENT
           terraform validate
-
+      - name: Debug tfvars file directory
+        run: ls -la "${GITHUB_WORKSPACE}/terraform/config"
       - name: Terraform Plan
         id: plan
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
           TFVARS_FILE="${{ needs.determine-environment.outputs.tfvars_file }}"
-          cd "${GITHUB_WORKSPACE}/terraform/environments/$ENVIRONMENT"
-          terraform plan -var-file=$TFVARS_FILE -var="lambda_zip_path=${GITHUB_WORKSPACE}/lambda_deployment_package.zip" -out=tfplan
+          cd terraform/environments/$ENVIRONMENT
+          terraform plan -var-file=$TFVARS_FILE -var="lambda_zip_path=../../../lambda_deployment_package.zip" -out=tfplan
           terraform show -json tfplan > plan.json
-
       - name: Upload Plan Artifact
         uses: actions/upload-artifact@v4
         with:
           name: terraform-${{ needs.determine-environment.outputs.environment }}-plan
-          path: "${GITHUB_WORKSPACE}/terraform/environments/${{ needs.determine-environment.outputs.environment }}/plan.json"
+          path: terraform/environments/${{ needs.determine-environment.outputs.environment }}/plan.json
           retention-days: 5
-
       - name: Comment Plan on PR
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v6
@@ -241,12 +225,13 @@ jobs:
           script: |
             const fs = require('fs');
             const environment = '${{ needs.determine-environment.outputs.environment }}';
-            const planSummary = fs.readFileSync(`${process.env.GITHUB_WORKSPACE}/terraform/environments/${environment}/tfplan`, 'utf8');
+            const planSummary = fs.readFileSync('terraform/environments/' + environment + '/tfplan', 'utf8');
             github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: `## Terraform Plan for ${environment} environment\n\n\`\`\`\n${planSummary}\n\`\`\``
+              body: `## Terraform Plan for ${environment} environment\n\n` +
+                    `\`\`\`\n${planSummary}\n\`\`\``
             });
 
   terraform-apply:
@@ -269,19 +254,16 @@ jobs:
       db_name: ${{ steps.outputs.outputs.db_name }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
-
+        uses: actions/checkout@v3
       - name: Configure AWS credentials with Role
         uses: aws-actions/configure-aws-credentials@v2
         with:
           role-to-assume: arn:aws:iam::070503547773:role/GitHubActionsRole
           aws-region: us-east-1
-
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: 1.5.0
-
       - name: Check for S3 state bucket
         id: check_s3_bucket
         run: |
@@ -294,21 +276,18 @@ jobs:
             echo "create_bucket=false" >> $GITHUB_OUTPUT
             echo "bucket_name=$BUCKET_NAME" >> $GITHUB_OUTPUT
           fi
-
       - name: Create valid placeholder Lambda ZIP
         run: |
           echo "Creating valid placeholder Lambda ZIP for deployment"
-          mkdir -p "${GITHUB_WORKSPACE}/placeholder_lambda"
-          echo 'def lambda_handler(event, context): return {"statusCode": 200, "body": "Placeholder Lambda function"}' > "${GITHUB_WORKSPACE}/placeholder_lambda/lambda_handler.py"
-          cd "${GITHUB_WORKSPACE}/placeholder_lambda"
+          mkdir -p placeholder_lambda
+          echo 'def lambda_handler(event, context): return {"statusCode": 200, "body": "Placeholder Lambda function"}' > placeholder_lambda/lambda_handler.py
+          cd placeholder_lambda
           zip -r ../lambda_deployment_package.zip .
-          cd "${GITHUB_WORKSPACE}"
-
+          cd ..
       - name: Update backend configuration
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
-          mkdir -p "${GITHUB_WORKSPACE}/terraform/environments/$ENVIRONMENT"
-          cat <<EOF > "${GITHUB_WORKSPACE}/terraform/environments/$ENVIRONMENT/backend.tf"
+          cat <<EOF > terraform/environments/$ENVIRONMENT/backend.tf
           terraform {
             backend "s3" {
               bucket = "${{ steps.check_s3_bucket.outputs.bucket_name }}"
@@ -320,27 +299,24 @@ jobs:
       - name: Terraform Init
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
-          cd "${GITHUB_WORKSPACE}/terraform/environments/$ENVIRONMENT"
+          cd terraform/environments/$ENVIRONMENT
           terraform init
-
       - name: Download Plan
         uses: actions/download-artifact@v4
         with:
           name: terraform-${{ needs.determine-environment.outputs.environment }}-plan
-          path: "${GITHUB_WORKSPACE}/terraform/environments/${{ needs.determine-environment.outputs.environment }}/"
-
+          path: terraform/environments/${{ needs.determine-environment.outputs.environment }}/
       - name: Terraform Apply
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
           TFVARS_FILE="${{ needs.determine-environment.outputs.tfvars_file }}"
-          cd "${GITHUB_WORKSPACE}/terraform/environments/$ENVIRONMENT"
-          terraform apply -auto-approve -var-file=$TFVARS_FILE -var="lambda_zip_path=${GITHUB_WORKSPACE}/lambda_deployment_package.zip"
-
+          cd terraform/environments/$ENVIRONMENT
+          terraform apply -auto-approve -var-file=$TFVARS_FILE -var="lambda_zip_path=../../../lambda_deployment_package.zip"
       - name: Get Terraform Outputs
         id: outputs
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
-          cd "${GITHUB_WORKSPACE}/terraform/environments/$ENVIRONMENT"
+          cd terraform/environments/$ENVIRONMENT
           terraform output > terraform_outputs.txt
           if grep -q "rds_endpoint" terraform_outputs.txt; then
             DB_HOST=$(terraform output -raw rds_endpoint 2>/dev/null | tr -d '\n')
@@ -432,7 +408,7 @@ jobs:
     environment: ${{ needs.determine-environment.outputs.environment }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
       - name: Configure AWS credentials with Role
         uses: aws-actions/configure-aws-credentials@v2
         with:
@@ -460,31 +436,25 @@ jobs:
           ACCOUNT_ID="070503547773"
           S3_BUCKET="lambda-packages-${ENVIRONMENT}-${ACCOUNT_ID}"
           S3_KEY="${{ needs.build-lambda-package.outputs.s3_lambda_key }}"
-          mkdir -p "${GITHUB_WORKSPACE}/terraform/environments/$ENVIRONMENT"
-          cat <<EOF > "${GITHUB_WORKSPACE}/terraform/environments/$ENVIRONMENT/backend.tf"
-          terraform {
-            backend "s3" {
-              bucket = "${{ steps.check_s3_bucket.outputs.bucket_name }}"
-              key    = "terraform/$ENVIRONMENT/terraform.tfstate"
-              region = "us-east-1"
-            }
-          }
+          cat > terraform/environments/$ENVIRONMENT/lambda_vars.auto.tfvars <<EOF
+          use_s3_source = true
+          s3_bucket = "$S3_BUCKET"
+          s3_key = "$S3_KEY"
           EOF
           echo "Created lambda_vars.auto.tfvars:"
-          cat "${GITHUB_WORKSPACE}/terraform/environments/$ENVIRONMENT/lambda_vars.auto.tfvars"
+          cat terraform/environments/$ENVIRONMENT/lambda_vars.auto.tfvars
       - name: Create placeholder zip file
         run: |
           echo "Creating placeholder zip for Terraform"
-          mkdir -p "${GITHUB_WORKSPACE}/placeholder"
-          echo "placeholder" > "${GITHUB_WORKSPACE}/placeholder/placeholder.txt"
-          cd "${GITHUB_WORKSPACE}/placeholder"
+          mkdir -p placeholder
+          echo "placeholder" > placeholder/placeholder.txt
+          cd placeholder
           zip -r ../lambda_deployment_package.zip .
-          cd "${GITHUB_WORKSPACE}"
+          cd ..
       - name: Update backend configuration
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
-          mkdir -p "${GITHUB_WORKSPACE}/terraform/environments/$ENVIRONMENT"
-          cat <<EOF > "${GITHUB_WORKSPACE}/terraform/environments/$ENVIRONMENT/backend.tf"
+          cat <<EOF > terraform/environments/$ENVIRONMENT/backend.tf
           terraform {
             backend "s3" {
               bucket = "${{ steps.check_s3_bucket.outputs.bucket_name }}"
@@ -493,11 +463,10 @@ jobs:
             }
           }
           EOF
-
       - name: Terraform Init
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
-          cd "${GITHUB_WORKSPACE}/terraform/environments/$ENVIRONMENT"
+          cd terraform/environments/$ENVIRONMENT
           terraform init
       - name: Terraform Apply with Lambda package
         run: |
@@ -506,7 +475,7 @@ jobs:
           TFVARS_FILE="${{ needs.determine-environment.outputs.tfvars_file }}"
           S3_BUCKET="lambda-packages-${ENVIRONMENT}-${ACCOUNT_ID}"
           S3_KEY="${{ needs.build-lambda-package.outputs.s3_lambda_key }}"
-          cd "${GITHUB_WORKSPACE}/terraform/environments/$ENVIRONMENT"
+          cd terraform/environments/$ENVIRONMENT
           terraform apply -auto-approve \
             -var-file=$TFVARS_FILE \
             -var="s3_bucket=$S3_BUCKET" \
@@ -520,7 +489,7 @@ jobs:
     environment: ${{ needs.determine-environment.outputs.environment }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
       - name: Configure AWS credentials with Role
         uses: aws-actions/configure-aws-credentials@v2
         with:
@@ -533,11 +502,11 @@ jobs:
       - name: Create placeholder zip for destroy
         run: |
           echo "Creating placeholder Lambda ZIP for destroy operation"
-          mkdir -p "${GITHUB_WORKSPACE}/placeholder"
-          echo "placeholder" > "${GITHUB_WORKSPACE}/placeholder/placeholder.txt"
-          cd "${GITHUB_WORKSPACE}/placeholder"
+          mkdir -p placeholder
+          echo "placeholder" > placeholder/placeholder.txt
+          cd placeholder
           zip -r ../lambda_deployment_package.zip .
-          cd "${GITHUB_WORKSPACE}"
+          cd ..
       - name: Check for S3 state bucket
         id: check_s3_bucket
         run: |
@@ -553,8 +522,7 @@ jobs:
       - name: Update backend configuration
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
-          mkdir -p "${GITHUB_WORKSPACE}/terraform/environments/$ENVIRONMENT"
-          cat <<EOF > "${GITHUB_WORKSPACE}/terraform/environments/$ENVIRONMENT/backend.tf"
+          cat <<EOF > terraform/environments/$ENVIRONMENT/backend.tf
           terraform {
             backend "s3" {
               bucket = "${{ steps.check_s3_bucket.outputs.bucket_name }}"
@@ -566,11 +534,11 @@ jobs:
       - name: Terraform Init
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
-          cd "${GITHUB_WORKSPACE}/terraform/environments/$ENVIRONMENT"
+          cd terraform/environments/$ENVIRONMENT
           terraform init
       - name: Terraform Destroy
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
           TFVARS_FILE="${{ needs.determine-environment.outputs.tfvars_file }}"
-          cd "${GITHUB_WORKSPACE}/terraform/environments/$ENVIRONMENT"
-          terraform destroy -auto-approve -var-file=$TFVARS_FILE -var="lambda_zip_path=${GITHUB_WORKSPACE}/lambda_deployment_package.zip"
+          cd terraform/environments/$ENVIRONMENT
+          terraform destroy -auto-approve -var-file=$TFVARS_FILE -var="lambda_zip_path=../../../lambda_deployment_package.zip"
