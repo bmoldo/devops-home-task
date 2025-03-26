@@ -9,7 +9,6 @@ on:
       - 'docker-compose.yml'
       - 'app/**'
       - 'terraform/**'
-      - '.github/workflows/ci-cd.yml'
   pull_request:
     # PRs for QA (from development) and PROD (from qa)
     branches: [ qa, prod ]
@@ -25,10 +24,10 @@ on:
       environment:
         description: 'Environment to deploy to'
         required: true
-        default: 'dev'
+        default: 'development'
         type: choice
         options:
-          - dev
+          - development
           - qa
           - prod
       run_infrastructure:
@@ -69,25 +68,25 @@ jobs:
         id: set-env
         run: |
           # Default to development
-          ENVIRONMENT="dev"
-          TFVARS_FILE="../config/${ENVIRONMENT}.tfvars"
+          ENVIRONMENT="development"
+          TFVARS_FILE="../../config/${ENVIRONMENT}.tfvars"
           
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             ENVIRONMENT="${{ github.event.inputs.environment }}"
-            TFVARS_FILE="../config/${ENVIRONMENT}.tfvars"
+            TFVARS_FILE="../../config/${ENVIRONMENT}.tfvars"
           elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
             # For PRs, use base branch as target
             if [[ "${{ github.base_ref }}" == "qa" ]]; then
               ENVIRONMENT="qa"
-              TFVARS_FILE="../config/qa.tfvars"
+              TFVARS_FILE="../../config/qa.tfvars"
             elif [[ "${{ github.base_ref }}" == "prod" ]]; then
               ENVIRONMENT="prod"
-              TFVARS_FILE="../config/prod.tfvars"
+              TFVARS_FILE="../../config/prod.tfvars"
             fi
           elif [[ "${{ github.event_name }}" == "push" ]]; then
             if [[ "${{ github.ref }}" == "refs/heads/development" ]]; then
-              ENVIRONMENT="dev"
-              TFVARS_FILE="../config/${ENVIRONMENT}.tfvars"
+              ENVIRONMENT="development"
+              TFVARS_FILE="../../config/development.tfvars"
             fi
           fi
           
@@ -121,7 +120,6 @@ jobs:
           filters: |
             terraform:
               - 'terraform/**'
-              - '.github/workflows/ci-cd.yml'
             lambda:
               - 'Dockerfile'
               - 'requirements.txt'
@@ -178,8 +176,6 @@ jobs:
       - name: Update backend configuration
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
-          mkdir -p terraform/environments/$ENVIRONMENT
-          echo "Overwriting backend config for $ENVIRONMENT"
           cat <<EOF > terraform/environments/$ENVIRONMENT/backend.tf
           terraform {
             backend "s3" {
@@ -287,8 +283,6 @@ jobs:
       - name: Update backend configuration
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
-          mkdir -p terraform/environments/$ENVIRONMENT
-          echo "Overwriting backend config for $ENVIRONMENT"
           cat <<EOF > terraform/environments/$ENVIRONMENT/backend.tf
           terraform {
             backend "s3" {
@@ -456,8 +450,6 @@ jobs:
       - name: Update backend configuration
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
-          mkdir -p terraform/environments/$ENVIRONMENT
-          echo "Overwriting backend config for $ENVIRONMENT"
           cat <<EOF > terraform/environments/$ENVIRONMENT/backend.tf
           terraform {
             backend "s3" {
@@ -526,8 +518,6 @@ jobs:
       - name: Update backend configuration
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
-          mkdir -p terraform/environments/$ENVIRONMENT
-          echo "Overwriting backend config for $ENVIRONMENT"
           cat <<EOF > terraform/environments/$ENVIRONMENT/backend.tf
           terraform {
             backend "s3" {
