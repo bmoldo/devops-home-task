@@ -195,6 +195,11 @@ jobs:
             }
           }
           EOF
+      - name: Checkout development branch if push, else default
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'push' && github.ref == 'refs/heads/development' && 'development' || '' }}
+          fetch-depth: 0
 
       - name: Terraform Init
         run: |
