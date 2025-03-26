@@ -74,20 +74,20 @@ jobs:
           
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             ENVIRONMENT="${{ github.event.inputs.environment }}"
-            TFVARS_FILE="../../config/${ENVIRONMENT}.tfvars"
+            TFVARS_FILE="../config/${ENVIRONMENT}.tfvars"
           elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
             # For PRs, use base branch as target
             if [[ "${{ github.base_ref }}" == "qa" ]]; then
               ENVIRONMENT="qa"
-              TFVARS_FILE="../../config/qa.tfvars"
+              TFVARS_FILE="../config/qa.tfvars"
             elif [[ "${{ github.base_ref }}" == "prod" ]]; then
               ENVIRONMENT="prod"
-              TFVARS_FILE="../../config/prod.tfvars"
+              TFVARS_FILE="../config/prod.tfvars"
             fi
           elif [[ "${{ github.event_name }}" == "push" ]]; then
             if [[ "${{ github.ref }}" == "refs/heads/development" ]]; then
               ENVIRONMENT="dev"
-              TFVARS_FILE="../../config/${ENVIRONMENT}.tfvars"
+              TFVARS_FILE="../config/${ENVIRONMENT}.tfvars"
             fi
           fi
           
