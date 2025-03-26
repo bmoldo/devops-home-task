@@ -217,6 +217,9 @@ jobs:
           cd terraform/environments/$ENVIRONMENT
           terraform validate
 
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        
       - name: Debug tfvars file directory
         run: ls -la terraform/config
 
