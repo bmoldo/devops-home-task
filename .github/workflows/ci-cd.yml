@@ -106,15 +106,6 @@ jobs:
         with:
           role-to-assume: arn:aws:iam::070503547773:role/GitHubActionsRole
           aws-region: us-east-1
-
-      - name: List Repository Root
-        run: ls -la $GITHUB_WORKSPACE
-    
-      - name: List Terraform Directory
-        run: ls -la $GITHUB_WORKSPACE/terraform
-    
-      - name: List Terraform Config Directory
-        run: ls -la $GITHUB_WORKSPACE/terraform/config
     
 
   changes:
