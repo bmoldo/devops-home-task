@@ -1,0 +1,106 @@
+name: Python Code Quality Scan
+
+on:
+  workflow_call:
+
+jobs:
+  python-lint:
+    name: Python Linting & Quality Checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install flake8 pylint bandit safety
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          
+      - name: Cache linting results
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-lint-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-lint-
+          
+      - name: Lint with flake8
+        run: |
+          # stop the build if there are Python syntax errors or undefined names
+          flake8 app/ --count --select=E9,F63,F7,F82 --show-source --statistics
+          # exit-zero treats all errors as warnings
+          flake8 app/ --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+      
+      - name: Static analysis with pylint
+        continue-on-error: true  # Don't fail the build for style issues
+        run: |
+          # Using a more relaxed set of checks initially
+          pylint --disable=C0111,R0903,C0103,C0303,W0311,E1101,R0902,R0913,R0914,W0703 app/
+          
+      - name: Security scan with bandit
+        run: |
+          bandit -r app/ -f json -o bandit-results.json || true
+          
+      - name: Upload security scan results
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-scan-results
+          path: bandit-results.json
+          retention-days: 5
+          
+      - name: Dependency vulnerability check with safety
+        continue-on-error: true  # Don't fail the build for vulnerabilities yet
+        run: |
+          safety check -r requirements.txt --output json || true
+
+  python-test:
+    name: Python Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-cov
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          
+      - name: Test with pytest
+        run: |
+          if [ -d app/tests ]; then
+            pytest app/tests/ --cov=app
+          else
+            echo "No tests directory found. Skipping tests."
+          fi
+
+  codeql-analysis:
+    name: CodeQL Security Analysis
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v2
+        with:
+          languages: python
+          
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v2

@@ -1,0 +1,179 @@
+name: Infrastructure Pipeline
+
+on:
+  push:
+    branches:
+      - development
+    paths:
+      - Dockerfile
+      - requirements.txt
+      - docker-compose.yml
+      - app/**
+      - terraform/**
+  pull_request:
+    branches:
+      - qa
+      - prod
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - closed
+    paths:
+      - Dockerfile
+      - requirements.txt
+      - docker-compose.yml
+      - app/**
+      - terraform/**
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment to deploy to
+        required: true
+        default: development
+        type: choice
+        options:
+          - development
+          - qa
+          - prod
+      run_infrastructure:
+        description: Run Terraform Infrastructure
+        required: true
+        default: true
+        type: boolean
+      run_tests:
+        description: Run Tests
+        required: true
+        default: true
+        type: boolean
+      build_and_deploy:
+        description: Build and Deploy
+        required: true
+        default: true
+        type: boolean
+      destroy_infrastructure:
+        description: Destroy Infrastructure
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: read
+
+jobs:
+  determine-environment:
+    name: Determine Environment
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.set-env.outputs.environment }}
+      tfvars_file: ${{ steps.set-env.outputs.tfvars_file }}
+    steps:
+      - name: Set environment based on branch/PR or input
+        id: set-env
+        run: |
+          ENVIRONMENT="development"
+          TFVARS_FILE="../../config/${ENVIRONMENT}.tfvars"
+
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            ENVIRONMENT="${{ github.event.inputs.environment }}"
+            TFVARS_FILE="../../config/${ENVIRONMENT}.tfvars"
+          elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            if [[ "${{ github.base_ref }}" == "qa" ]]; then
+              ENVIRONMENT="qa"
+              TFVARS_FILE="../../config/qa.tfvars"
+            elif [[ "${{ github.base_ref }}" == "prod" ]]; then
+              ENVIRONMENT="prod"
+              TFVARS_FILE="../../config/prod.tfvars"
+            fi
+          elif [[ "${{ github.event_name }}" == "push" ]]; then
+            if [[ "${{ github.ref }}" == "refs/heads/development" ]]; then
+              ENVIRONMENT="development"
+              TFVARS_FILE="../../config/development.tfvars"
+            fi
+          fi
+
+          echo "environment=$ENVIRONMENT" >> $GITHUB_OUTPUT
+          echo "tfvars_file=$TFVARS_FILE" >> $GITHUB_OUTPUT
+          echo "Selected environment: $ENVIRONMENT"
+          echo "Selected tfvars file: $TFVARS_FILE"
+
+  changes:
+    name: Detect File Changes
+    runs-on: ubuntu-latest
+    outputs:
+      terraform: ${{ steps.filter.outputs.terraform }}
+      lambda: ${{ steps.filter.outputs.lambda }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Check for file changes
+        id: filter
+        uses: dorny/paths-filter@v2
+        with:
+          filters: |
+            terraform:
+              - 'terraform/**'
+            lambda:
+              - 'Dockerfile'
+              - 'requirements.txt'
+              - 'docker-compose.yml'
+              - 'app/**'
+
+  code-scan:
+    name: Python Code Quality Scan
+    needs:
+      - changes
+    if: |
+      needs.changes.outputs.lambda == 'true' &&  (
+        github.event_name == 'push' || 
+        github.event_name == 'pull_request' || 
+        (github.event_name == 'workflow_dispatch' && github.event.inputs.run_tests == 'true')
+      )
+    uses: ./.github/workflows/python-scan-v2.yml
+
+  terraform-operations:
+    name: Terraform Operations
+    needs:
+      - determine-environment
+      - changes
+      - code-scan
+    if: >
+      always() && (needs.code-scan.result == 'success' || needs.code-scan.result == 'skipped') &&
+      (
+        (needs.changes.outputs.terraform == 'true' && (github.event_name == 'push' || github.event_name == 'pull_request')) || 
+        (github.event_name == 'workflow_dispatch' && github.event.inputs.run_infrastructure == 'true')
+      )
+    uses: ./.github/workflows/terraform-workflow-v2.yml
+    with:
+      environment: ${{ needs.determine-environment.outputs.environment }}
+      tfvars_file: ${{ needs.determine-environment.outputs.tfvars_file }}
+      destroy: ${{ github.event.inputs.destroy_infrastructure == 'true' }}
+    secrets:
+      aws_role: arn:aws:iam::070503547773:role/GitHubActionsRole
+
+  lambda-deployment:
+    name: Lambda Build and Deploy
+    needs:
+      - determine-environment
+      - changes
+      - code-scan
+      - terraform-operations
+    if: >
+      always() && (needs.code-scan.result == 'success' || needs.code-scan.result == 'skipped') &&
+      needs.terraform-operations.result == 'success' &&
+      (
+        (needs.changes.outputs.lambda == 'true' && (github.event_name == 'push' || github.event_name == 'pull_request')) || 
+        (github.event_name == 'workflow_dispatch' && github.event.inputs.build_and_deploy == 'true')
+      ) && github.event.inputs.destroy_infrastructure != 'true'
+    uses: ./.github/workflows/lambda-workflow-v2.yml
+    with:
+      environment: ${{ needs.determine-environment.outputs.environment }}
+      db_host: ${{ needs.terraform-operations.outputs.db_host }}
+      db_name: ${{ needs.terraform-operations.outputs.db_name }}
+    secrets:
+      aws_role: arn:aws:iam::070503547773:role/GitHubActionsRole
