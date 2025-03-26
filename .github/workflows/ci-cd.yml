@@ -87,7 +87,7 @@ jobs:
           elif [[ "${{ github.event_name }}" == "push" ]]; then
             if [[ "${{ github.ref }}" == "refs/heads/development" ]]; then
               ENVIRONMENT="dev"
-              TFVARS_FILE="${GITHUB_WORKSPACE}/terraform/config/${ENVIRONMENT}.tfvars"
+              TFVARS_FILE="../../config/${ENVIRONMENT}.tfvars"
             fi
           fi
           
