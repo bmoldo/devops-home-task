@@ -211,12 +211,12 @@ jobs:
         id: plan
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
-          TFVARS_FILE="${{ needs.determine-environment.outputs.tfvars_file }}"
-          cd terraform/environments/$ENVIRONMENT
-          # Debug: list the file to ensure it exists
-          ls -la $TFVARS_FILE
-          terraform plan -var-file="$TFVARS_FILE" -var="lambda_zip_path=../../../lambda_deployment_package.zip" -out=tfplan
-          terraform show -json tfplan > plan.json
+          TFVARS_FILE="${GITHUB_WORKSPACE}/terraform/config/${ENVIRONMENT}.tfvars"
+          # Debug: list the terraform config folder to verify the file is present
+          ls -la ${GITHUB_WORKSPACE}/terraform/config
+          terraform -chdir=terraform/environments/$ENVIRONMENT plan -var-file="$TFVARS_FILE" -var="lambda_zip_path=../../../lambda_deployment_package.zip" -out=tfplan
+          terraform -chdir=terraform/environments/$ENVIRONMENT show -json tfplan > plan.json
+        
       - name: Upload Plan Artifact
         uses: actions/upload-artifact@v4
         with:
