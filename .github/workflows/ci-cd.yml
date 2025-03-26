@@ -70,28 +70,28 @@ jobs:
         run: |
           # Default to dev
           ENVIRONMENT="dev"
-          TFVARS_FILE="${GITHUB_WORKSPACE}/terraform/config/dev.tfvars"
+          TFVARS_FILE="$(dirname ${GITHUB_WORKSPACE})/terraform/config/dev.tfvars"
           
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             if [[ "${{ github.event.inputs.environment }}" == "development" || "${{ github.event.inputs.environment }}" == "dev" ]]; then
               ENVIRONMENT="dev"
-              TFVARS_FILE="${GITHUB_WORKSPACE}/terraform/config/dev.tfvars"
+              TFVARS_FILE="$(dirname ${GITHUB_WORKSPACE})/terraform/config/dev.tfvars"
             else
               ENVIRONMENT="${{ github.event.inputs.environment }}"
-              TFVARS_FILE="${GITHUB_WORKSPACE}/terraform/config/${ENVIRONMENT}.tfvars"
+              TFVARS_FILE="$(dirname ${GITHUB_WORKSPACE})/terraform/config/${ENVIRONMENT}.tfvars"
             fi
           elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
             if [[ "${{ github.base_ref }}" == "qa" ]]; then
               ENVIRONMENT="qa"
-              TFVARS_FILE="${GITHUB_WORKSPACE}/terraform/config/qa.tfvars"
+              TFVARS_FILE="$(dirname ${GITHUB_WORKSPACE})/terraform/config/qa.tfvars"
             elif [[ "${{ github.base_ref }}" == "prod" ]]; then
               ENVIRONMENT="prod"
-              TFVARS_FILE="${GITHUB_WORKSPACE}/terraform/config/prod.tfvars"
+              TFVARS_FILE="$(dirname ${GITHUB_WORKSPACE})/terraform/config/prod.tfvars"
             fi
           elif [[ "${{ github.event_name }}" == "push" ]]; then
             if [[ "${{ github.ref }}" == "refs/heads/development" ]]; then
               ENVIRONMENT="dev"
-              TFVARS_FILE="${GITHUB_WORKSPACE}/terraform/config/dev.tfvars"
+              TFVARS_FILE="$(dirname ${GITHUB_WORKSPACE})/terraform/config/dev.tfvars"
             fi
           fi
           
@@ -99,6 +99,7 @@ jobs:
           echo "tfvars_file=$TFVARS_FILE" >> $GITHUB_OUTPUT
           echo "Selected environment: $ENVIRONMENT"
           echo "Selected tfvars file: $TFVARS_FILE"
+
 
       - name: Configure AWS credentials with Role
         uses: aws-actions/configure-aws-credentials@v2
