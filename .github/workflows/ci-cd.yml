@@ -9,6 +9,7 @@ on:
       - 'docker-compose.yml'
       - 'app/**'
       - 'terraform/**'
+      - '.github/workflows/ci-cd.yml'
   pull_request:
     # PRs for QA (from development) and PROD (from qa)
     branches: [ qa, prod ]
@@ -24,10 +25,10 @@ on:
       environment:
         description: 'Environment to deploy to'
         required: true
-        default: 'development'
+        default: 'dev'
         type: choice
         options:
-          - development
+          - dev
           - qa
           - prod
       run_infrastructure:
@@ -67,26 +68,30 @@ jobs:
       - name: Set environment based on branch/PR or input
         id: set-env
         run: |
-          # Default to development
-          ENVIRONMENT="development"
-          TFVARS_FILE="../../config/${ENVIRONMENT}.tfvars"
+          # Default to dev
+          ENVIRONMENT="dev"
+          TFVARS_FILE="${GITHUB_WORKSPACE}/terraform/config/dev.tfvars"
           
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            ENVIRONMENT="${{ github.event.inputs.environment }}"
-            TFVARS_FILE="../../config/${ENVIRONMENT}.tfvars"
+            if [[ "${{ github.event.inputs.environment }}" == "development" || "${{ github.event.inputs.environment }}" == "dev" ]]; then
+              ENVIRONMENT="dev"
+              TFVARS_FILE="${GITHUB_WORKSPACE}/terraform/config/dev.tfvars"
+            else
+              ENVIRONMENT="${{ github.event.inputs.environment }}"
+              TFVARS_FILE="${GITHUB_WORKSPACE}/terraform/config/${ENVIRONMENT}.tfvars"
+            fi
           elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            # For PRs, use base branch as target
             if [[ "${{ github.base_ref }}" == "qa" ]]; then
               ENVIRONMENT="qa"
-              TFVARS_FILE="../../config/qa.tfvars"
+              TFVARS_FILE="${GITHUB_WORKSPACE}/terraform/config/qa.tfvars"
             elif [[ "${{ github.base_ref }}" == "prod" ]]; then
               ENVIRONMENT="prod"
-              TFVARS_FILE="../../config/prod.tfvars"
+              TFVARS_FILE="${GITHUB_WORKSPACE}/terraform/config/prod.tfvars"
             fi
           elif [[ "${{ github.event_name }}" == "push" ]]; then
             if [[ "${{ github.ref }}" == "refs/heads/development" ]]; then
-              ENVIRONMENT="development"
-              TFVARS_FILE="../../config/development.tfvars"
+              ENVIRONMENT="dev"
+              TFVARS_FILE="${GITHUB_WORKSPACE}/terraform/config/dev.tfvars"
             fi
           fi
           
@@ -100,7 +105,6 @@ jobs:
         with:
           role-to-assume: arn:aws:iam::070503547773:role/GitHubActionsRole
           aws-region: us-east-1
-    
 
   changes:
     name: Detect File Changes
@@ -110,7 +114,7 @@ jobs:
       lambda: ${{ steps.filter.outputs.lambda }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
@@ -121,6 +125,7 @@ jobs:
           filters: |
             terraform:
               - 'terraform/**'
+              - '.github/workflows/ci-cd.yml'
             lambda:
               - 'Dockerfile'
               - 'requirements.txt'
@@ -140,21 +145,26 @@ jobs:
           (github.event_name == 'pull_request' && ((github.base_ref == 'qa' && github.head_ref == 'development') || (github.base_ref == 'prod' && github.head_ref == 'qa')))
         )
       )
-    # Switch to a different runner image
+    # Use a different runner
     runs-on: ubuntu-20.04
     environment: ${{ needs.determine-environment.outputs.environment }}
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Configure AWS credentials with Role
         uses: aws-actions/configure-aws-credentials@v2
         with:
           role-to-assume: arn:aws:iam::070503547773:role/GitHubActionsRole
           aws-region: us-east-1
+
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: 1.5.0
+
       - name: Check for S3 state bucket
         id: check_s3_bucket
         run: |
@@ -167,6 +177,7 @@ jobs:
             echo "create_bucket=false" >> $GITHUB_OUTPUT
             echo "bucket_name=$BUCKET_NAME" >> $GITHUB_OUTPUT
           fi
+
       - name: Create valid placeholder Lambda ZIP
         run: |
           echo "Creating valid placeholder Lambda ZIP for planning"
@@ -175,9 +186,11 @@ jobs:
           cd placeholder_lambda
           zip -r ../lambda_deployment_package.zip .
           cd ..
+
       - name: Update backend configuration
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
+          mkdir -p terraform/environments/$ENVIRONMENT
           cat <<EOF > terraform/environments/$ENVIRONMENT/backend.tf
           terraform {
             backend "s3" {
@@ -187,22 +200,27 @@ jobs:
             }
           }
           EOF
+
       - name: Terraform Init
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
           cd terraform/environments/$ENVIRONMENT
           terraform init
+
       - name: Terraform Format
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
           terraform fmt -check -recursive
+
       - name: Terraform Validate
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
           cd terraform/environments/$ENVIRONMENT
           terraform validate
+
       - name: Debug tfvars file directory
         run: ls -la "${GITHUB_WORKSPACE}/terraform/config"
+
       - name: Terraform Plan
         id: plan
         run: |
@@ -211,12 +229,14 @@ jobs:
           cd terraform/environments/$ENVIRONMENT
           terraform plan -var-file=$TFVARS_FILE -var="lambda_zip_path=../../../lambda_deployment_package.zip" -out=tfplan
           terraform show -json tfplan > plan.json
+
       - name: Upload Plan Artifact
         uses: actions/upload-artifact@v4
         with:
           name: terraform-${{ needs.determine-environment.outputs.environment }}-plan
           path: terraform/environments/${{ needs.determine-environment.outputs.environment }}/plan.json
           retention-days: 5
+
       - name: Comment Plan on PR
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v6
@@ -254,7 +274,7 @@ jobs:
       db_name: ${{ steps.outputs.outputs.db_name }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       - name: Configure AWS credentials with Role
         uses: aws-actions/configure-aws-credentials@v2
         with:
@@ -287,6 +307,7 @@ jobs:
       - name: Update backend configuration
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
+          mkdir -p terraform/environments/$ENVIRONMENT
           cat <<EOF > terraform/environments/$ENVIRONMENT/backend.tf
           terraform {
             backend "s3" {
@@ -408,7 +429,7 @@ jobs:
     environment: ${{ needs.determine-environment.outputs.environment }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       - name: Configure AWS credentials with Role
         uses: aws-actions/configure-aws-credentials@v2
         with:
@@ -454,6 +475,7 @@ jobs:
       - name: Update backend configuration
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
+          mkdir -p terraform/environments/$ENVIRONMENT
           cat <<EOF > terraform/environments/$ENVIRONMENT/backend.tf
           terraform {
             backend "s3" {
@@ -489,7 +511,7 @@ jobs:
     environment: ${{ needs.determine-environment.outputs.environment }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       - name: Configure AWS credentials with Role
         uses: aws-actions/configure-aws-credentials@v2
         with:
@@ -522,6 +544,7 @@ jobs:
       - name: Update backend configuration
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
+          mkdir -p terraform/environments/$ENVIRONMENT
           cat <<EOF > terraform/environments/$ENVIRONMENT/backend.tf
           terraform {
             backend "s3" {
