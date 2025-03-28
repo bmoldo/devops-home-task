@@ -509,16 +509,16 @@ jobs:
           set -euo pipefail
           echo "🔍 Running Healthcheck..."
 
-          ENV="${{ needs.determine-environment.outputs.environment }}"
+          ENV="dev"
           echo "📦 ENV: $ENV"
 
           cd terraform/environments/$ENV
 
           echo "🔧 Initializing Terraform..."
-          terraform init -reconfigure > /dev/null
+          "$TERRAFORM_CLI_PATH" init -reconfigure > /dev/null
 
           echo "🌐 Fetching api_url..."
-          API_URL=$(terraform output -raw api_url 2>/dev/null || echo "")
+          API_URL=$("$TERRAFORM_CLI_PATH" output -raw api_url 2>/dev/null || echo "")
 
           if [[ -z "$API_URL" ]]; then
             echo "❌ No api_url found in Terraform outputs."
@@ -526,8 +526,13 @@ jobs:
           fi
 
           echo "ℹ️ Using API URL: $API_URL"
-
           echo "🔁 Checking $API_URL/healthcheck..."
+          curl --fail --silent --show-error "$API_URL/healthcheck" || {
+            echo "❌ Healthcheck failed at $API_URL/healthcheck"
+            exit 1
+          }
+
+          echo "✅ Healthcheck passed: $API_URL/healthcheck"
         
 
   terraform-destroy:
