@@ -192,6 +192,7 @@ jobs:
               bucket = "${{ steps.check_s3_bucket.outputs.bucket_name }}"
               key    = "terraform/$ENVIRONMENT/terraform.tfstate"
               region = "us-east-1"
+              dynamodb_table = "terraform-locks-$ENVIRONMENT"
             }
           }
           EOF
