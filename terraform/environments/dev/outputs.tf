@@ -51,5 +51,5 @@ output "lambda_packages_bucket" {
 
 output "api_url" {
   description = "API Gateway endpoint if available"
-  value       = length(module.api_gateway) > 0 ? module.api_gateway[0].api_url : ""
+  value       = module.api_gateway.invoke_url
 }

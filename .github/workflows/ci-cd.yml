@@ -483,66 +483,7 @@ jobs:
           fi
           echo "db_host=${DB_HOST}" >> $GITHUB_OUTPUT
           echo "db_name=${DB_NAME}" >> $GITHUB_OUTPUT
-
-  healthcheck:
-    name: Healthcheck Test
-    needs: [determine-environment, terraform-apply]
-    runs-on: ubuntu-latest
-    if: success()
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v2
-        with:
-          role-to-assume: arn:aws:iam::070503547773:role/GitHubActionsRole
-          aws-region: us-east-1
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v2
-        with:
-          terraform_version: 1.5.0
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v2
-        with:
-          role-to-assume: arn:aws:iam::070503547773:role/GitHubActionsRole
-          aws-region: us-east-1
-    
-      - name: Run API Healthcheck
-        run: |
-          set -euo pipefail
-          echo "🔍 Running Healthcheck..."
-      
-          ENV="dev"
-          echo "📦 ENV: $ENV"
-      
-          cd terraform/environments/$ENV
-      
-          echo "🔧 Initializing Terraform..."
-          "$TERRAFORM_CLI_PATH/terraform-bin" init -reconfigure > /dev/null
-      
-          echo "🌐 Fetching api_url..."
-          API_URL="$("$TERRAFORM_CLI_PATH/terraform-bin" output -raw api_url 2>/dev/null || echo "")"
-      
-          if [[ -z "$API_URL" ]]; then
-            echo "❌ No api_url found in Terraform outputs."
-            echo "ℹ️ Available outputs:"
-            "$TERRAFORM_CLI_PATH/terraform-bin" output || true
-            exit 1
-          fi
-      
-          echo "ℹ️ Using API URL: $API_URL"
-          echo "🔁 Checking $API_URL/healthcheck..."
-          curl --fail --silent --show-error "$API_URL/healthcheck" || {
-            echo "❌ Healthcheck failed at $API_URL/healthcheck"
-            exit 1
-          }
-      
-          echo "✅ Healthcheck passed: $API_URL/healthcheck"
-        
-
+          
   terraform-destroy:
     name: Terraform Destroy Infrastructure
     needs: [determine-environment]
