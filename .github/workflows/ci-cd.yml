@@ -131,6 +131,8 @@ jobs:
               - 'requirements.txt'
               - 'docker-compose.yml'
               - 'app/**'
+            bootstrap:
+              - 'terraform/bootstrap/**'
 
   bootstrap-lock-table:
     name: Bootstrap Lock Table
