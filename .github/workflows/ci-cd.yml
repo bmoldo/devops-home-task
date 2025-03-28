@@ -504,6 +504,12 @@ jobs:
         with:
           terraform_version: 1.5.0
 
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: arn:aws:iam::070503547773:role/GitHubActionsRole
+          aws-region: us-east-1
+    
       - name: Run API Healthcheck
         run: |
           set -euo pipefail
@@ -535,15 +541,6 @@ jobs:
           }
       
           echo "✅ Healthcheck passed: $API_URL/healthcheck"
-        env:
-          AWS_DEFAULT_REGION: us-east-1
-          AWS_REGION: us-east-1
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
-          TERRAFORM_CLI_PATH: ${{ env.TERRAFORM_CLI_PATH }}
-        
-
         
 
   terraform-destroy:
