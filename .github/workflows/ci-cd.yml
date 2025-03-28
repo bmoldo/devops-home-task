@@ -366,7 +366,7 @@ jobs:
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
           TFVARS_FILE="${{ needs.determine-environment.outputs.tfvars_file }}"
           cd terraform/environments/$ENVIRONMENT
-          terraform apply -auto-approve -var-file=$TFVARS_FILE -var="lambda_zip_path=../../../lambda_deployment_package.zip"
+          terraform apply -auto-approve -var-file=../../config/$ENVIRONMENT.tfvars -var="lambda_zip_path=../../../lambda_deployment_package.zip"
       - name: Get Terraform Outputs
         id: outputs
         run: |
