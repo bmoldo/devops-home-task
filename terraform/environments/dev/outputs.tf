@@ -50,5 +50,5 @@ output "lambda_packages_bucket" {
 }
 
 output "api_url" {
-  value = aws_apigatewayv2_stage.default.invoke_url
+  value = "https://${aws_api_gateway_rest_api.api.id}.execute-api.${data.aws_region.current.name}.amazonaws.com/${var.stage_name}"
 }
