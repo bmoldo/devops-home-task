@@ -258,7 +258,7 @@ module "api_gateway" {
 
 # dynamodb_table for state lock file
 module "lock_table" {
-  source     = "../../modules/lock_table"
+  source      = "../../modules/lock_table"
   environment = var.environment
   tags        = local.common_tags
 }

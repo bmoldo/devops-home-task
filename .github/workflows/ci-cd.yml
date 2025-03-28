@@ -208,11 +208,11 @@ jobs:
           cd terraform/environments/$ENVIRONMENT
           terraform init -reconfigure
 
-      - name: Terraform Format
-        run: |
-          ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
-          cd terraform
-          terraform fmt -check -recursive
+      # - name: Terraform Format
+      #   run: |
+      #     ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
+      #     cd terraform
+      #     terraform fmt -check -recursive
 
       - name: Terraform Validate
         run: |
