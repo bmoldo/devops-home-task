@@ -131,6 +131,28 @@ jobs:
               - 'requirements.txt'
               - 'docker-compose.yml'
               - 'app/**'
+              bootstrap-lock-table:
+                name: Bootstrap Lock Table
+                runs-on: ubuntu-latest
+                steps:
+                  - uses: actions/checkout@v4
+            
+                  - name: Configure AWS credentials
+                    uses: aws-actions/configure-aws-credentials@v2
+                    with:
+                      role-to-assume: arn:aws:iam::070503547773:role/GitHubActionsRole
+                      aws-region: us-east-1
+            
+                  - name: Setup Terraform
+                    uses: hashicorp/setup-terraform@v2
+                    with:
+                      terraform_version: 1.5.0
+            
+                  - name: Init + Apply Lock Table
+                    run: |
+                      cd terraform/bootstrap
+                      terraform init
+                      terraform apply -auto-approve -var="environment=dev"
 
   terraform-plan:
     name: Terraform Plan
