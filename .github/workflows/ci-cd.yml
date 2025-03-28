@@ -156,7 +156,7 @@ jobs:
       - name: Bootstrap DynamoDB Lock Table
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
-          cd terraform/modules/bootstrap
+          cd terraform/bootstrap
           terraform init
           terraform apply -auto-approve -var="environment=$ENVIRONMENT"
 
