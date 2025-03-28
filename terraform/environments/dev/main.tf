@@ -209,7 +209,6 @@ resource "random_password" "db_password" {
 # Lambda function for API
 module "lambda" {
   source = "../../modules/lambda"
-  enabled = var.enabled
   
   function_name      = "${var.lambda_config.function_name}-${local.env_suffix}"
   execution_role_arn = aws_iam_role.lambda_execution_role.arn

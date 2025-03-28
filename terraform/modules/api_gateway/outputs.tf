@@ -23,3 +23,10 @@ output "execution_arn" {
   value       = aws_api_gateway_rest_api.api.execution_arn
 }
 
+output "region" {
+  value = data.aws_region.current.name
+}
+
+output "api_url" {
+  value = "https://${aws_api_gateway_rest_api.api.id}.execute-api.${data.aws_region.current.name}.amazonaws.com/${var.stage_name}"
+}
