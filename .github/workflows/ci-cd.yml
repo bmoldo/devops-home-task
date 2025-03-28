@@ -536,12 +536,11 @@ jobs:
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
           ACCOUNT_ID="070503547773"
-          TFVARS_FILE="${{ needs.determine-environment.outputs.tfvars_file }}"
           S3_BUCKET="lambda-packages-${ENVIRONMENT}-${ACCOUNT_ID}"
           S3_KEY="${{ needs.build-lambda-package.outputs.s3_lambda_key }}"
           cd terraform/environments/$ENVIRONMENT
           terraform apply -auto-approve \
-            -var-file=$TFVARS_FILE \
+            -var-file=../../config/$ENVIRONMENT.tfvars \
             -var="s3_bucket=$S3_BUCKET" \
             -var="s3_key=$S3_KEY"
 
