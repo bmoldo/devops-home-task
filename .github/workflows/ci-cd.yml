@@ -507,12 +507,13 @@ jobs:
       - name: Run API Healthcheck
         run: |
           echo "🔍 Running Healthcheck..."
-          cd terraform/environments/${{ needs.determine-environment.outputs.environment }}
+          ENV="${{ needs.determine-environment.outputs.environment }}"
+          cd terraform/environments/$ENV
 
-          if terraform output -raw api_url &>/dev/null; then
-            API_URL=$(terraform output -raw api_url)
-          else
-            echo "❌ No api_url output found in Terraform state."
+          API_URL=$(terraform output -raw api_url 2>/dev/null || echo "")
+
+          if [ -z "$API_URL" ]; then
+            echo "❌ No api_url found in Terraform outputs."
             exit 1
           fi
 
