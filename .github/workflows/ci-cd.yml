@@ -512,6 +512,10 @@ jobs:
 
           cd terraform/environments/$ENV
 
+          echo "🔧 Running terraform init..."
+          terraform init -reconfigure
+
+          echo "🌐 Fetching api_url output..."
           API_URL=$(terraform output -raw api_url 2>/dev/null || echo "")
           if [ -z "$API_URL" ]; then
             echo "❌ No api_url found in Terraform outputs."
@@ -526,7 +530,7 @@ jobs:
           }
 
           echo "✅ Healthcheck passed: $API_URL/healthcheck"
-        
+      
 
 
   terraform-destroy:
