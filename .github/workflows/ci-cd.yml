@@ -305,11 +305,22 @@ jobs:
           python-version: '3.11'
           cache: 'pip'
 
-      - name: Run Python security scan (bandit)
+      - name: Run Python security scan (Bandit)
         run: |
-          echo "Scanning Python files in ./app/ for security issues..."
+          echo "🔐 Scanning Python files in ./app/ for security issues..."
           pip install bandit
-          bandit -r ./app -ll -iii -q
+          bandit -r ./app -f json -o bandit_report.json || true
+          cat bandit_report.json
+      
+          ISSUE_COUNT=$(jq '.results | length' bandit_report.json)
+          echo "🚨 Issues found: $ISSUE_COUNT"
+      
+          if [ "$ISSUE_COUNT" -gt 0 ]; then
+            echo "❌ Security issues detected in Python code."
+            exit 1
+          else
+            echo "✅ No security issues found."
+          fi
 
       - name: Update script permissions
         run: chmod +x create_lambda_package.sh
@@ -324,7 +335,7 @@ jobs:
         with:
           role-to-assume: arn:aws:iam::070503547773:role/GitHubActionsRole
           aws-region: us-east-1
-          
+
       - name: Upload Lambda package to S3
         id: upload-lambda
         run: |
