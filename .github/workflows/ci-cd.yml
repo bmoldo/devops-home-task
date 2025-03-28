@@ -327,9 +327,11 @@ jobs:
 
       - name: Create Lambda deployment package
         id: create-lambda-package
+        if: steps.bandit-scan.outputs.scan_passed == 'true'
         run: |
           ./create_lambda_package.sh
           echo "lambda_package_path=lambda_deployment_package.zip" >> $GITHUB_OUTPUT
+
       - name: Configure AWS credentials with Role
         uses: aws-actions/configure-aws-credentials@v2
         with:
@@ -338,6 +340,7 @@ jobs:
 
       - name: Upload Lambda package to S3
         id: upload-lambda
+        if: steps.bandit-scan.outputs.scan_passed == 'true'
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
           ACCOUNT_ID="070503547773"
