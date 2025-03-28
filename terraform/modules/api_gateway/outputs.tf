@@ -13,11 +13,6 @@ output "stage_name" {
   value       = aws_api_gateway_deployment.deployment.stage_name
 }
 
-output "invoke_url" {
-  description = "URL to invoke the API endpoint"
-  value       = aws_api_gateway_deployment.deployment.invoke_url
-}
-
 output "execution_arn" {
   description = "Execution ARN of the API Gateway"
   value       = aws_api_gateway_rest_api.api.execution_arn
@@ -32,7 +27,3 @@ output "api_url" {
   value       = "https://${aws_api_gateway_rest_api.api.id}.execute-api.${data.aws_region.current.name}.amazonaws.com/${aws_api_gateway_deployment.deployment.stage_name}"
 }
 
-output "invoke_url" {
-  description = "The invoke URL of the API Gateway"
-  value       = aws_api_gateway_deployment.deployment.invoke_url
-}
