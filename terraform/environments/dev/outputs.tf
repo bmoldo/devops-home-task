@@ -48,3 +48,7 @@ output "lambda_packages_bucket" {
   description = "The S3 bucket for Lambda deployment packages"
   value       = aws_s3_bucket.lambda_packages.bucket
 }
+
+output "api_url" {
+  value = aws_apigatewayv2_stage.default.invoke_url
+}

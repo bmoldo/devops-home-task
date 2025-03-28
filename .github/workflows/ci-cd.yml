@@ -306,19 +306,21 @@ jobs:
           cache: 'pip'
 
       - name: Run Python security scan (Bandit)
+        id: bandit-scan
         run: |
           echo "🔐 Scanning Python files in ./app/ for security issues..."
           pip install bandit
           bandit -r ./app -f json -o bandit_report.json || true
           cat bandit_report.json
-      
+
           ISSUE_COUNT=$(jq '.results | length' bandit_report.json)
           echo "🚨 Issues found: $ISSUE_COUNT"
-      
+
           if [ "$ISSUE_COUNT" -gt 0 ]; then
+            echo "scan_passed=false" >> $GITHUB_OUTPUT
             echo "❌ Security issues detected in Python code."
-            exit 1
           else
+            echo "scan_passed=true" >> $GITHUB_OUTPUT
             echo "✅ No security issues found."
           fi
 
@@ -481,6 +483,25 @@ jobs:
           fi
           echo "db_host=${DB_HOST}" >> $GITHUB_OUTPUT
           echo "db_name=${DB_NAME}" >> $GITHUB_OUTPUT
+
+      - name: Healthcheck Test
+        if: success()
+        run: |
+          echo "🔍 Running Healthcheck..."
+          API_URL=$(terraform output -raw api_url || echo "")
+          if [ -z "$API_URL" ]; then
+            echo "❌ No API URL found from Terraform output."
+            exit 1
+          fi
+
+          curl --fail --silent --show-error "$API_URL/healthcheck" || {
+            echo "❌ Healthcheck failed at $API_URL/healthcheck"
+            exit 1
+          }
+
+          echo "✅ Healthcheck passed: $API_URL/healthcheck"
+  
+
 
   terraform-destroy:
     name: Terraform Destroy Infrastructure
