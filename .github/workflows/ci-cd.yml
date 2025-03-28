@@ -515,15 +515,15 @@ jobs:
           cd terraform/environments/$ENV
       
           echo "🔧 Initializing Terraform..."
-          terraform init -reconfigure > /dev/null
+          "$TERRAFORM_CLI_PATH/terraform-bin" init -reconfigure > /dev/null
       
           echo "🌐 Fetching api_url..."
-          API_URL="$(terraform output -raw api_url 2>/dev/null || echo "")"
+          API_URL="$("$TERRAFORM_CLI_PATH/terraform-bin" output -raw api_url 2>/dev/null || echo "")"
       
           if [[ -z "$API_URL" ]]; then
             echo "❌ No api_url found in Terraform outputs."
             echo "ℹ️ Available outputs:"
-            terraform output || true
+            "$TERRAFORM_CLI_PATH/terraform-bin" output || true
             exit 1
           fi
       
@@ -535,6 +535,14 @@ jobs:
           }
       
           echo "✅ Healthcheck passed: $API_URL/healthcheck"
+        env:
+          AWS_DEFAULT_REGION: us-east-1
+          AWS_REGION: us-east-1
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
+          TERRAFORM_CLI_PATH: ${{ env.TERRAFORM_CLI_PATH }}
+        
 
         
 
