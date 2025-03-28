@@ -1,6 +1,5 @@
 resource "aws_lambda_function" "function" {
-  count = var.enabled ? 1 : 0
-
+  count = var.s3_key != "" ? 1 : 0
   function_name = var.function_name
   s3_bucket     = var.s3_bucket
   s3_key        = var.s3_key
