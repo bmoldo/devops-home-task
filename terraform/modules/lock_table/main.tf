@@ -1,5 +1,5 @@
-resource "aws_dynamodb_table" "terraform_locks" {
-  name         = "terraform-locks-${var.environment}"
+resource "aws_dynamodb_table" "terraform_lock_table" {
+  name         = var.table_name
   billing_mode = "PAY_PER_REQUEST"
   hash_key     = "LockID"
 

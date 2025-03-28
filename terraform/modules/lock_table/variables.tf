@@ -1,8 +1,10 @@
-variable "environment" {
-  type = string
+variable "table_name" {
+  description = "Name of the DynamoDB table"
+  type        = string
 }
 
 variable "tags" {
-  type    = map(string)
-  default = {}
+  description = "Tags to apply to the table"
+  type        = map(string)
+  default     = {}
 }

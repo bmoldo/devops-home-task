@@ -1,9 +1,9 @@
 output "lock_table_name" {
-  description = "Name of the DynamoDB lock table used by Terraform"
   value       = aws_dynamodb_table.terraform_lock_table.name
+  description = "DynamoDB table name used for state locking"
 }
 
 output "lock_table_arn" {
-  description = "ARN of the DynamoDB lock table used by Terraform"
   value       = aws_dynamodb_table.terraform_lock_table.arn
+  description = "DynamoDB table ARN"
 }
