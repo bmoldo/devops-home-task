@@ -1,6 +1,6 @@
 terraform {
   backend "s3" {
-    bucket = "terraform-state-<your-org>-<your-repo>"
+    bucket = "terraform-state-bmoldo-devops-home-task"
     key    = "bootstrap/terraform.tfstate"
     region = "us-east-1"
   }
