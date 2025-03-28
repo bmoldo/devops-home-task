@@ -48,3 +48,8 @@ output "lambda_packages_bucket" {
   description = "The S3 bucket for Lambda deployment packages"
   value       = aws_s3_bucket.lambda_packages.bucket
 }
+
+output "api_url" {
+  description = "API Gateway endpoint if available"
+  value       = length(module.api_gateway) > 0 ? module.api_gateway[0].invoke_url : null
+}
