@@ -248,7 +248,7 @@ jobs:
             ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
             TFVARS_FILE="${{ needs.determine-environment.outputs.tfvars_file }}"
             cd terraform/environments/$ENVIRONMENT
-            terraform plan -var-file=../../config/$ENVIRONMENT.tfvars -var="lambda_zip_path=../../../lambda_deployment_package.zip" -out=tfplan
+            terraform plan -var-file=../../config/$ENVIRONMENT.tfvars -out=tfplan
             terraform show -json tfplan > plan.json
 
       - name: Upload Plan Artifact
@@ -529,4 +529,4 @@ jobs:
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
           TFVARS_FILE="${{ needs.determine-environment.outputs.tfvars_file }}"
           cd terraform/environments/$ENVIRONMENT
-          terraform destroy -auto-approve -var-file=$TFVARS_FILE -var="lambda_zip_path=../../../lambda_deployment_package.zip"
+          terraform destroy -auto-approve -var-file=$TFVARS_FILE 
