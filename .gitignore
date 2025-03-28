@@ -177,14 +177,6 @@ build/
 lambda_package/
 lambda_deployment_package.zip
 
-# # Terraform
-# terraform/
-# .terraform/
-# *.tfstate
-# *.tfstate.*
-# .terraform.lock.hcl
-# terraform.tfvars
-
 # Log files
 logs/
 *.log
