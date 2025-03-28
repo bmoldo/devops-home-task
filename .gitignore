@@ -177,7 +177,7 @@ build/
 lambda_package/
 lambda_deployment_package.zip
 
-# Terraform
+# # Terraform
 terraform/
 .terraform/
 *.tfstate
