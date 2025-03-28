@@ -506,7 +506,9 @@ jobs:
 
       - name: Run API Healthcheck
         run: |
+          set -euo pipefail
           echo "🔍 Running Healthcheck..."
+
           ENV="${{ needs.determine-environment.outputs.environment }}"
           echo "📦 ENV: $ENV"
 
@@ -516,7 +518,8 @@ jobs:
           terraform init -reconfigure
 
           echo "🌐 Fetching api_url output..."
-          API_URL=$(terraform output -raw api_url 2>/dev/null || echo "")
+          API_URL=$(terraform output -raw api_url || echo "")
+
           if [ -z "$API_URL" ]; then
             echo "❌ No api_url found in Terraform outputs."
             exit 1
@@ -530,8 +533,6 @@ jobs:
           }
 
           echo "✅ Healthcheck passed: $API_URL/healthcheck"
-      
-
 
   terraform-destroy:
     name: Terraform Destroy Infrastructure
