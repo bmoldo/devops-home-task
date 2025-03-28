@@ -120,3 +120,10 @@ variable "ecr_config" {
   })
   default = null
 }
+
+
+variable "enabled" {
+  description = "Flag to enable or disable resources"
+  type        = bool
+  default     = true
+}

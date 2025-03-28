@@ -304,8 +304,16 @@ jobs:
         with:
           python-version: '3.11'
           cache: 'pip'
+
+      - name: Run Python security scan (bandit)
+        run: |
+          echo "Scanning Python files in ./app/ for security issues..."
+          pip install bandit
+          bandit -r ./app -ll -iii -q
+
       - name: Update script permissions
         run: chmod +x create_lambda_package.sh
+
       - name: Create Lambda deployment package
         id: create-lambda-package
         run: |
@@ -316,6 +324,7 @@ jobs:
         with:
           role-to-assume: arn:aws:iam::070503547773:role/GitHubActionsRole
           aws-region: us-east-1
+          
       - name: Upload Lambda package to S3
         id: upload-lambda
         run: |
