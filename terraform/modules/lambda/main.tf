@@ -1,9 +1,9 @@
 resource "aws_lambda_function" "function" {
-  count = var.s3_key != "" ? 1 : 0
+  count = var.enabled ? 1 : 0
 
   function_name = var.function_name
-  s3_bucket     = var.s3_key != "" ? var.s3_bucket : null
-  s3_key        = var.s3_key != "" ? var.s3_key : null
+  s3_bucket     = var.s3_bucket
+  s3_key        = var.s3_key
   handler       = var.handler
   runtime       = var.runtime
 

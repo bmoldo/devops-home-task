@@ -70,3 +70,9 @@ variable "s3_key" {
   type        = string
   default     = ""
 }
+
+variable "enabled" {
+  description = "Whether to create the Lambda function"
+  type        = bool
+  default     = false
+}

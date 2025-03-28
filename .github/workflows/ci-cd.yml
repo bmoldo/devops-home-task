@@ -204,15 +204,6 @@ jobs:
             echo "bucket_name=$BUCKET_NAME" >> $GITHUB_OUTPUT
           fi
 
-      - name: Create valid placeholder Lambda ZIP
-        run: |
-          echo "Creating valid placeholder Lambda ZIP for planning"
-          mkdir -p placeholder_lambda
-          echo 'def lambda_handler(event, context): return {"statusCode": 200, "body": "Placeholder Lambda function"}' > placeholder_lambda/lambda_handler.py
-          cd placeholder_lambda
-          zip -r ../lambda_deployment_package.zip .
-          cd ..
-
       - name: Update backend configuration
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
@@ -284,115 +275,9 @@ jobs:
                     `\`\`\`\n${planSummary}\n\`\`\``
             });
 
-  terraform-apply:
-    name: Terraform Apply Infrastructure
-    needs: [determine-environment, terraform-plan]
-    if: |
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.run_infrastructure == 'true') ||
-      (
-        github.event_name != 'workflow_dispatch' &&
-        needs.changes.outputs.terraform == 'true' &&
-        (
-          (github.event_name == 'push' && github.ref == 'refs/heads/development') ||
-          (github.event_name == 'pull_request' && ((github.base_ref == 'qa' && github.head_ref == 'development') || (github.base_ref == 'prod' && github.head_ref == 'qa')))
-        )
-      )
-    runs-on: ubuntu-latest
-    environment: ${{ needs.determine-environment.outputs.environment }}
-    outputs:
-      db_host: ${{ steps.outputs.outputs.db_host }}
-      db_name: ${{ steps.outputs.outputs.db_name }}
-    steps:
-      - name: Checkout development branch if push, else default
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event_name == 'push' && github.ref == 'refs/heads/development' && 'development' || '' }}
-          fetch-depth: 0
-
-      - name: Configure AWS credentials with Role
-        uses: aws-actions/configure-aws-credentials@v2
-        with:
-          role-to-assume: arn:aws:iam::070503547773:role/GitHubActionsRole
-          aws-region: us-east-1
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v2
-        with:
-          terraform_version: 1.5.0
-
-      - name: Check for S3 state bucket
-        id: check_s3_bucket
-        run: |
-          BUCKET_NAME="terraform-state-${{ github.repository_owner }}-${{ github.event.repository.name }}"
-          BUCKET_EXISTS=$(aws s3api head-bucket --bucket $BUCKET_NAME 2>&1 || echo "not exists")
-          if [[ $BUCKET_EXISTS == *"not exists"* ]]; then
-            echo "create_bucket=true" >> $GITHUB_OUTPUT
-            echo "bucket_name=$BUCKET_NAME" >> $GITHUB_OUTPUT
-          else
-            echo "create_bucket=false" >> $GITHUB_OUTPUT
-            echo "bucket_name=$BUCKET_NAME" >> $GITHUB_OUTPUT
-          fi
-      - name: Create valid placeholder Lambda ZIP
-        run: |
-          echo "Creating valid placeholder Lambda ZIP for deployment"
-          mkdir -p placeholder_lambda
-          echo 'def lambda_handler(event, context): return {"statusCode": 200, "body": "Placeholder Lambda function"}' > placeholder_lambda/lambda_handler.py
-          cd placeholder_lambda
-          zip -r ../lambda_deployment_package.zip .
-          cd ..
-      - name: Update backend configuration
-        run: |
-          ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
-          mkdir -p terraform/environments/$ENVIRONMENT
-          cat <<EOF > terraform/environments/$ENVIRONMENT/backend.tf
-          terraform {
-            backend "s3" {
-              bucket = "${{ steps.check_s3_bucket.outputs.bucket_name }}"
-              key    = "terraform/$ENVIRONMENT/terraform.tfstate"
-              region = "us-east-1"
-            }
-          }
-          EOF
-      - name: Terraform Init
-        run: |
-          ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
-          cd terraform/environments/$ENVIRONMENT
-          terraform init
-      - name: Download Plan
-        uses: actions/download-artifact@v4
-        with:
-          name: terraform-${{ needs.determine-environment.outputs.environment }}-plan
-          path: terraform/environments/${{ needs.determine-environment.outputs.environment }}/
-      - name: Terraform Apply
-        run: |
-          ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
-          TFVARS_FILE="${{ needs.determine-environment.outputs.tfvars_file }}"
-          cd terraform/environments/$ENVIRONMENT
-          terraform apply -auto-approve -var-file=../../config/$ENVIRONMENT.tfvars -var="lambda_zip_path=../../../lambda_deployment_package.zip"
-      - name: Get Terraform Outputs
-        id: outputs
-        run: |
-          ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
-          cd terraform/environments/$ENVIRONMENT
-          terraform output > terraform_outputs.txt
-          if grep -q "rds_endpoint" terraform_outputs.txt; then
-            DB_HOST=$(terraform output -raw rds_endpoint 2>/dev/null | tr -d '\n')
-          else
-            echo "Warning: rds_endpoint output not found, using empty value"
-            DB_HOST=""
-          fi
-          if grep -q "db_name" terraform_outputs.txt; then
-            DB_NAME=$(terraform output -raw db_name 2>/dev/null | tr -d '\n')
-          else
-            echo "Warning: db_name output not found, using empty value"
-            DB_NAME=""
-          fi
-          echo "db_host=${DB_HOST}" >> $GITHUB_OUTPUT
-          echo "db_name=${DB_NAME}" >> $GITHUB_OUTPUT
-
   build-lambda-package:
     name: Build Lambda Package
-    needs: [determine-environment, terraform-plan, terraform-apply]
+    needs: [determine-environment, terraform-plan]
     if: |
       (github.event_name == 'workflow_dispatch' && github.event.inputs.build_and_deploy == 'true' && github.event.inputs.destroy_infrastructure == 'false') ||
       (
@@ -452,14 +337,14 @@ jobs:
             exit 1
           fi
 
-  update-lambda:
-    name: Update Lambda with New Package
-    needs: [determine-environment, build-lambda-package, terraform-apply]
+  terraform-apply:
+    name: Terraform Apply Infrastructure
+    needs: [determine-environment, terraform-plan, build-lambda-package]
     if: |
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.build_and_deploy == 'true') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.run_infrastructure == 'true') ||
       (
         github.event_name != 'workflow_dispatch' &&
-        needs.changes.outputs.lambda == 'true' &&
+        needs.changes.outputs.terraform == 'true' &&
         (
           (github.event_name == 'push' && github.ref == 'refs/heads/development') ||
           (github.event_name == 'pull_request' && ((github.base_ref == 'qa' && github.head_ref == 'development') || (github.base_ref == 'prod' && github.head_ref == 'qa')))
@@ -467,6 +352,9 @@ jobs:
       )
     runs-on: ubuntu-latest
     environment: ${{ needs.determine-environment.outputs.environment }}
+    outputs:
+      db_host: ${{ steps.outputs.outputs.db_host }}
+      db_name: ${{ steps.outputs.outputs.db_name }}
     steps:
       - name: Checkout development branch if push, else default
         uses: actions/checkout@v4
@@ -479,10 +367,12 @@ jobs:
         with:
           role-to-assume: arn:aws:iam::070503547773:role/GitHubActionsRole
           aws-region: us-east-1
+
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: 1.5.0
+
       - name: Check for S3 state bucket
         id: check_s3_bucket
         run: |
@@ -495,27 +385,16 @@ jobs:
             echo "create_bucket=false" >> $GITHUB_OUTPUT
             echo "bucket_name=$BUCKET_NAME" >> $GITHUB_OUTPUT
           fi
-      - name: Create Lambda S3 variables file
+
+      - name: Create valid placeholder Lambda ZIP
         run: |
-          ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
-          ACCOUNT_ID="070503547773"
-          S3_BUCKET="lambda-packages-${ENVIRONMENT}-${ACCOUNT_ID}"
-          S3_KEY="${{ needs.build-lambda-package.outputs.s3_lambda_key }}"
-          cat > terraform/environments/$ENVIRONMENT/lambda_vars.auto.tfvars <<EOF
-          use_s3_source = true
-          s3_bucket = "$S3_BUCKET"
-          s3_key = "$S3_KEY"
-          EOF
-          echo "Created lambda_vars.auto.tfvars:"
-          cat terraform/environments/$ENVIRONMENT/lambda_vars.auto.tfvars
-      - name: Create placeholder zip file
-        run: |
-          echo "Creating placeholder zip for Terraform"
-          mkdir -p placeholder
-          echo "placeholder" > placeholder/placeholder.txt
-          cd placeholder
+          echo "Creating valid placeholder Lambda ZIP for deployment"
+          mkdir -p placeholder_lambda
+          echo 'def lambda_handler(event, context): return {"statusCode": 200, "body": "Placeholder Lambda function"}' > placeholder_lambda/lambda_handler.py
+          cd placeholder_lambda
           zip -r ../lambda_deployment_package.zip .
           cd ..
+
       - name: Update backend configuration
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
@@ -527,24 +406,57 @@ jobs:
               key    = "terraform/$ENVIRONMENT/terraform.tfstate"
               region = "us-east-1"
             }
-          }
+            }
           EOF
+
       - name: Terraform Init
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
           cd terraform/environments/$ENVIRONMENT
+       
           terraform init
-      - name: Terraform Apply with Lambda package
+      - name: Download Plan
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-${{ needs.determine-environment.outputs.environment }}-plan
+    
+          path: terraform/environments/${{ needs.determine-environment.outputs.environment }}/
+
+      - name: Terraform Apply
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
-          ACCOUNT_ID="070503547773"
-          S3_BUCKET="lambda-packages-${ENVIRONMENT}-${ACCOUNT_ID}"
+          TFVARS_FILE="${{ needs.determine-environment.outputs.tfvars_file }}"
+          S3_BUCKET="lambda-packages-${ENVIRONMENT}-070503547773"
           S3_KEY="${{ needs.build-lambda-package.outputs.s3_lambda_key }}"
+      
           cd terraform/environments/$ENVIRONMENT
+      
           terraform apply -auto-approve \
-            -var-file=../../config/$ENVIRONMENT.tfvars \
+            -var-file=$TFVARS_FILE \
+            -var="enabled=true" \
             -var="s3_bucket=$S3_BUCKET" \
             -var="s3_key=$S3_KEY"
+
+      - name: Get Terraform Outputs
+        id: outputs
+        run: |
+          ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
+          cd terraform/environments/$ENVIRONMENT
+          terraform output > terraform_outputs.txt
+          if grep -q "rds_endpoint" terraform_outputs.txt; then
+            DB_HOST=$(terraform output -raw rds_endpoint 2>/dev/null | tr -d '\n')
+          else
+            echo "Warning: rds_endpoint output not found, using empty value"
+            DB_HOST=""
+          fi
+          if grep -q "db_name" terraform_outputs.txt; then
+            DB_NAME=$(terraform output -raw db_name 2>/dev/null | tr -d '\n')
+          else
+            echo "Warning: db_name output not found, using empty value"
+            DB_NAME=""
+          fi
+          echo "db_host=${DB_HOST}" >> $GITHUB_OUTPUT
+          echo "db_name=${DB_NAME}" >> $GITHUB_OUTPUT
 
   terraform-destroy:
     name: Terraform Destroy Infrastructure
@@ -564,10 +476,12 @@ jobs:
         with:
           role-to-assume: arn:aws:iam::070503547773:role/GitHubActionsRole
           aws-region: us-east-1
+
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: 1.5.0
+
       - name: Create placeholder zip for destroy
         run: |
           echo "Creating placeholder Lambda ZIP for destroy operation"
@@ -576,6 +490,7 @@ jobs:
           cd placeholder
           zip -r ../lambda_deployment_package.zip .
           cd ..
+
       - name: Check for S3 state bucket
         id: check_s3_bucket
         run: |
@@ -588,6 +503,7 @@ jobs:
             echo "create_bucket=false" >> $GITHUB_OUTPUT
             echo "bucket_name=$BUCKET_NAME" >> $GITHUB_OUTPUT
           fi
+
       - name: Update backend configuration
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
@@ -601,11 +517,13 @@ jobs:
             }
           }
           EOF
+
       - name: Terraform Init
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
           cd terraform/environments/$ENVIRONMENT
           terraform init
+
       - name: Terraform Destroy
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
