@@ -50,5 +50,7 @@ output "lambda_packages_bucket" {
 }
 
 output "api_url" {
-  value = var.s3_key != "" ? module.api_gateway[0].api_url : ""
+  description = "Public API Gateway URL"
+  value       = module.api_gateway[0].api_url
+  condition   = length(module.api_gateway) > 0
 }

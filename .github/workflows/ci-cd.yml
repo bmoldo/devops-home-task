@@ -494,7 +494,7 @@ jobs:
             exit 1
           fi
 
-          curl --fail --silent --show-error "$API_URL/healthcheck" || {
+          curl --fail --silent --show-error --max-time 10 "$API_URL/healthcheck" || {
             echo "❌ Healthcheck failed at $API_URL/healthcheck"
             exit 1
           }
