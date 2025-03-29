@@ -23,7 +23,9 @@ output "region" {
 }
 
 output "api_url" {
-  description = "Full invoke URL of the API Gateway"
-  value       = "https://${aws_api_gateway_rest_api.api.id}.execute-api.${data.aws_region.current.name}.amazonaws.com/${aws_api_gateway_deployment.deployment.stage_name}"
+  value = length(module.api_gateway) > 0 ? module.api_gateway[0].api_url : null
 }
 
+output "api_gateway_url" {
+  value = length(module.api_gateway) > 0 ? module.api_gateway[0].api_url : null
+}
