@@ -539,10 +539,14 @@ jobs:
           echo "🔧 Initializing Terraform..."
           terraform init -reconfigure > /dev/null
       
-          echo "🌐 Fetching 'api_url' output..."
-          # Store the output in a file to avoid capturing debug information
-          terraform output -raw api_url > api_url.txt
-          API_URL=$(cat api_url.txt)
+          # Create a temporary script to get the API URL
+          cat > get_url.sh << 'EOF'
+          #!/bin/bash
+          terraform output -raw api_url
+          EOF
+      
+          chmod +x get_url.sh
+          API_URL=$(./get_url.sh)
       
           if [[ -z "$API_URL" ]]; then
             echo "❌ No 'api_url' found in Terraform outputs."
@@ -556,6 +560,7 @@ jobs:
           echo "ℹ️ Using API URL: $API_URL"
           echo "🔁 Sending GET request to $HEALTHCHECK_URL..."
       
+          # Use the actual curl command directly on the URL
           curl --fail --silent --show-error "$HEALTHCHECK_URL" || {
             echo "❌ Healthcheck failed at $HEALTHCHECK_URL"
             exit 1
