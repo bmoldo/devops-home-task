@@ -539,19 +539,16 @@ jobs:
           echo "🔧 Initializing Terraform..."
           terraform init -reconfigure > /dev/null
       
-          # Create a temporary script to get the API URL
-          cat > get_url.sh << 'EOF'
-          #!/bin/bash
-          terraform output -raw api_url
-          EOF
-      
-          chmod +x get_url.sh
-          API_URL=$(./get_url.sh)
-      
-          if [[ -z "$API_URL" ]]; then
-            echo "❌ No 'api_url' found in Terraform outputs."
-            echo "ℹ️ Available outputs:"
-            terraform output || true
+          echo "🌐 Fetching 'api_url' output..."
+          FULL_OUTPUT=$(terraform output -raw api_url || true)
+          
+          # Extract the URL using a regex pattern
+          if [[ $FULL_OUTPUT =~ https://[a-z0-9]+\.execute-api\.[a-z0-9-]+\.amazonaws\.com/[a-z]+ ]]; then
+            API_URL="${BASH_REMATCH[0]}"
+            echo "Extracted API URL: $API_URL"
+          else
+            echo "❌ Could not extract API URL from output."
+            echo "Full output was: $FULL_OUTPUT"
             exit 1
           fi
       
@@ -560,7 +557,6 @@ jobs:
           echo "ℹ️ Using API URL: $API_URL"
           echo "🔁 Sending GET request to $HEALTHCHECK_URL..."
       
-          # Use the actual curl command directly on the URL
           curl --fail --silent --show-error "$HEALTHCHECK_URL" || {
             echo "❌ Healthcheck failed at $HEALTHCHECK_URL"
             exit 1
