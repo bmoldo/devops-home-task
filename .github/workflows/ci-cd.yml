@@ -447,21 +447,43 @@ jobs:
     
           path: terraform/environments/${{ needs.determine-environment.outputs.environment }}/
 
+      # - name: Terraform Apply
+      #   run: |
+      #     ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
+      #     TFVARS_FILE="../../config/${ENVIRONMENT}.tfvars"
+      #     S3_BUCKET="lambda-packages-${ENVIRONMENT}-070503547773"
+      #     S3_KEY="${{ needs.build-lambda-package.outputs.s3_lambda_key }}"
+          
+      #     cd terraform/environments/$ENVIRONMENT
+      
+      #     terraform apply -auto-approve \
+      #       -var-file=$TFVARS_FILE \
+      #       -var="enabled=true" \
+      #       -var="s3_bucket=$S3_BUCKET" \
+      #       -var="s3_key=$S3_KEY"
+        
       - name: Terraform Apply
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
           TFVARS_FILE="../../config/${ENVIRONMENT}.tfvars"
           S3_BUCKET="lambda-packages-${ENVIRONMENT}-070503547773"
-          S3_KEY="${{ needs.build-lambda-package.outputs.s3_lambda_key }}"
+          
+          # Debug information 
+          echo "S3 Lambda key from output: ${{ needs.build-lambda-package.outputs.s3_lambda_key }}"
+          
+          # Build the terraform command with the correct variables
+          TERRAFORM_CMD="terraform apply -auto-approve -var-file=$TFVARS_FILE -var=\"enabled=true\" -var=\"s3_bucket=$S3_BUCKET\""
+          
+          # Only add s3_key if it has a value
+          if [ -n "${{ needs.build-lambda-package.outputs.s3_lambda_key }}" ]; then
+            TERRAFORM_CMD="$TERRAFORM_CMD -var=\"s3_key=${{ needs.build-lambda-package.outputs.s3_lambda_key }}\""
+            echo "Using S3 key: ${{ needs.build-lambda-package.outputs.s3_lambda_key }}"
+          else
+            echo "WARNING: No S3 key found, Lambda will not be deployed"
+          fi
           
           cd terraform/environments/$ENVIRONMENT
-      
-          terraform apply -auto-approve \
-            -var-file=$TFVARS_FILE \
-            -var="enabled=true" \
-            -var="s3_bucket=$S3_BUCKET" \
-            -var="s3_key=$S3_KEY"
-        
+          eval $TERRAFORM_CMD
 
       - name: Get Terraform Outputs
         id: outputs
