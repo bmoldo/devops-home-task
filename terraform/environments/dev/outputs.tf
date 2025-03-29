@@ -35,7 +35,7 @@ output "lambda_function_name" {
 
 output "api_gateway_url" {
   description = "API Gateway URL"
-  value       = length(module.api_gateway) > 0 ? "${module.api_gateway[0].invoke_url}${var.api_gateway_config.stage_name}/" : null
+  value       = length(module.api_gateway) > 0 ? module.api_gateway[0].api_url : null
 }
 
 
@@ -51,5 +51,5 @@ output "lambda_packages_bucket" {
 
 output "api_url" {
   description = "API Gateway endpoint if available"
-  value       = length(module.api_gateway) > 0 ? module.api_gateway[0].invoke_url : null
+  value       = length(module.api_gateway) > 0 ? module.api_gateway[0].api_url : null
 }
