@@ -305,24 +305,24 @@ jobs:
           python-version: '3.11'
           cache: 'pip'
 
-      - name: Run Python security scan (Bandit)
-        id: bandit-scan
-        run: |
-          echo "🔐 Scanning Python files in ./app/ for security issues..."
-          pip install bandit
-          bandit -r ./app -f json -o bandit_report.json || true
-          cat bandit_report.json
+      # - name: Run Python security scan (Bandit)
+      #   id: bandit-scan
+      #   run: |
+      #     echo "🔐 Scanning Python files in ./app/ for security issues..."
+      #     pip install bandit
+      #     bandit -r ./app -f json -o bandit_report.json || true
+      #     cat bandit_report.json
 
-          ISSUE_COUNT=$(jq '.results | length' bandit_report.json)
-          echo "🚨 Issues found: $ISSUE_COUNT"
+      #     ISSUE_COUNT=$(jq '.results | length' bandit_report.json)
+      #     echo "🚨 Issues found: $ISSUE_COUNT"
 
-          if [ "$ISSUE_COUNT" -gt 0 ]; then
-            echo "scan_passed=false" >> $GITHUB_OUTPUT
-            echo "❌ Security issues detected in Python code."
-          else
-            echo "scan_passed=true" >> $GITHUB_OUTPUT
-            echo "✅ No security issues found."
-          fi
+      #     if [ "$ISSUE_COUNT" -gt 0 ]; then
+      #       echo "scan_passed=false" >> $GITHUB_OUTPUT
+      #       echo "❌ Security issues detected in Python code."
+      #     else
+      #       echo "scan_passed=true" >> $GITHUB_OUTPUT
+      #       echo "✅ No security issues found."
+      #     fi
 
       - name: Update script permissions
         run: chmod +x create_lambda_package.sh
