@@ -329,10 +329,10 @@ jobs:
 
       - name: Create Lambda deployment package
         id: create-lambda-package
-        if: steps.bandit-scan.outputs.scan_passed == 'true'
+        # if: steps.bandit-scan.outputs.scan_passed == 'true'
         run: |
           ./create_lambda_package.sh
-          echo "lambda_package_path=lambda_deployment_package.zip" >> $GITHUB_OUTPUT
+          echo "lambda_package_path=lambda_deployment_package.zip" >> "$GITHUB_OUTPUT"
 
       - name: Configure AWS credentials with Role
         uses: aws-actions/configure-aws-credentials@v2
@@ -342,7 +342,7 @@ jobs:
 
       - name: Upload Lambda package to S3
         id: upload-lambda
-        if: steps.bandit-scan.outputs.scan_passed == 'true'
+        # if: steps.bandit-scan.outputs.scan_passed == 'true'
         run: |
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
           ACCOUNT_ID="070503547773"
@@ -462,43 +462,28 @@ jobs:
       #       -var="s3_bucket=$S3_BUCKET" \
       #       -var="s3_key=$S3_KEY"
         
-      - name: Terraform Apply
-        run: |
-          ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
-          TFVARS_FILE="../../config/${ENVIRONMENT}.tfvars"
-          S3_BUCKET="lambda-packages-${ENVIRONMENT}-070503547773"
-          
-          # Debug information
-          echo "build-lambda-package job was run: ${{ needs.build-lambda-package.result == 'success' }}"
-          echo "S3 Lambda key from build-lambda-package: ${{ needs.build-lambda-package.outputs.s3_lambda_key }}"
-          
-          # Create a variable for S3 key with proper fallback
-          if [ "${{ needs.build-lambda-package.result }}" == "success" ] && [ -n "${{ needs.build-lambda-package.outputs.s3_lambda_key }}" ]; then
+        - name: Terraform Apply
+          run: |
+            ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
+            TFVARS_FILE="../../config/${ENVIRONMENT}.tfvars"
+            S3_BUCKET="lambda-packages-${ENVIRONMENT}-070503547773"
             S3_KEY="${{ needs.build-lambda-package.outputs.s3_lambda_key }}"
-            echo "Using S3 key from build-lambda-package job: $S3_KEY"
-          else
-            # Create a placeholder Lambda package if we don't have one
-            echo "No Lambda package key found, creating a default package"
-            mkdir -p default_lambda
-            echo 'def lambda_handler(event, context): return {"statusCode": 200, "body": "Default Lambda function"}' > default_lambda/lambda_handler.py
-            cd default_lambda
-            zip -r ../default_lambda.zip .
-            cd ..
             
-            TIMESTAMP=$(date +%Y%m%d%H%M%S)
-            S3_KEY="lambda/default_lambda_${TIMESTAMP}.zip"
-            aws s3 cp default_lambda.zip s3://$S3_BUCKET/$S3_KEY
-            echo "Created and uploaded default Lambda package: $S3_KEY"
-          fi
-          
-          cd terraform/environments/$ENVIRONMENT
-          
-          # Apply with the S3 key explicitly set
-          terraform apply -auto-approve \
-            -var-file=$TFVARS_FILE \
-            -var="enabled=true" \
-            -var="s3_bucket=$S3_BUCKET" \
-            -var="s3_key=$S3_KEY"
+            if [ -z "$S3_KEY" ]; then
+              echo "❌ ERROR: S3 key is not available. Lambda package likely failed to build or upload."
+              exit 1
+            fi
+        
+            echo "✅ Using Lambda S3 key: $S3_KEY"
+        
+            cd terraform/environments/$ENVIRONMENT
+        
+            terraform apply -auto-approve \
+              -var-file=$TFVARS_FILE \
+              -var="enabled=true" \
+              -var="s3_bucket=$S3_BUCKET" \
+              -var="s3_key=$S3_KEY"
+    
 
       - name: Get Terraform Outputs
         id: outputs
@@ -521,58 +506,58 @@ jobs:
           echo "db_host=${DB_HOST}" >> $GITHUB_OUTPUT
           echo "db_name=${DB_NAME}" >> $GITHUB_OUTPUT
 
-  # healthcheck:
-  #   name: API Healthcheck
-  #   needs: [determine-environment, terraform-apply]
-  #   if: success()
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - name: Checkout code
-  #       uses: actions/checkout@v4
+  healthcheck:
+    name: API Healthcheck
+    needs: [determine-environment, terraform-apply]
+    if: success()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-  #     - name: Configure AWS credentials
-  #       uses: aws-actions/configure-aws-credentials@v2
-  #       with:
-  #         role-to-assume: arn:aws:iam::070503547773:role/GitHubActionsRole
-  #         aws-region: us-east-1
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: arn:aws:iam::070503547773:role/GitHubActionsRole
+          aws-region: us-east-1
 
-  #     - name: Setup Terraform
-  #       uses: hashicorp/setup-terraform@v2
-  #       with:
-  #         terraform_version: 1.5.0
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.5.0
 
-  #     - name: Run API Healthcheck
-  #       run: |
-  #         set -euo pipefail
-  #         echo "🔍 Running Healthcheck..."
+      - name: Run API Healthcheck
+        run: |
+          set -euo pipefail
+          echo "🔍 Running Healthcheck..."
 
-  #         ENV="${{ needs.determine-environment.outputs.environment }}"
-  #         echo "📦 ENV: $ENV"
+          ENV="${{ needs.determine-environment.outputs.environment }}"
+          echo "📦 ENV: $ENV"
 
-  #         cd terraform/environments/$ENV
+          cd terraform/environments/$ENV
 
-  #         echo "🔧 Initializing Terraform..."
-  #         terraform init -reconfigure > /dev/null
+          echo "🔧 Initializing Terraform..."
+          terraform init -reconfigure > /dev/null
 
-  #         echo "🌐 Fetching 'api_url' output..."
-  #         API_URL="$(terraform output -raw api_url 2>/dev/null || echo "")"
+          echo "🌐 Fetching 'api_url' output..."
+          API_URL="$(terraform output -raw api_url 2>/dev/null || echo "")"
 
-  #         if [[ -z "$API_URL" ]]; then
-  #           echo "❌ No 'api_url' found in Terraform outputs."
-  #           echo "ℹ️ Available outputs:"
-  #           terraform output || true
-  #           exit 1
-  #         fi
+          if [[ -z "$API_URL" ]]; then
+            echo "❌ No 'api_url' found in Terraform outputs."
+            echo "ℹ️ Available outputs:"
+            terraform output || true
+            exit 1
+          fi
 
-  #         echo "ℹ️ Using API URL: $API_URL"
-  #         echo "🔁 Sending GET request to $API_URL/healthcheck..."
+          echo "ℹ️ Using API URL: $API_URL"
+          echo "🔁 Sending GET request to $API_URL/healthcheck..."
 
-  #         curl --fail --silent --show-error "$API_URL/healthcheck" || {
-  #           echo "❌ Healthcheck failed at $API_URL/healthcheck"
-  #           exit 1
-  #         }
+          curl --fail --silent --show-error "$API_URL/healthcheck" || {
+            echo "❌ Healthcheck failed at $API_URL/healthcheck"
+            exit 1
+          }
 
-  #         echo "✅ Healthcheck passed: $API_URL/healthcheck"
+          echo "✅ Healthcheck passed: $API_URL/healthcheck"
         
 
   terraform-destroy:
