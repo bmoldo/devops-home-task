@@ -530,35 +530,39 @@ jobs:
         run: |
           set -euo pipefail
           echo "🔍 Running Healthcheck..."
-
+      
           ENV="${{ needs.determine-environment.outputs.environment }}"
           echo "📦 ENV: $ENV"
-
+      
           cd terraform/environments/$ENV
-
+      
           echo "🔧 Initializing Terraform..."
           terraform init -reconfigure > /dev/null
-
+      
           echo "🌐 Fetching 'api_url' output..."
-          API_URL="$($(which terraform) output -raw api_url | tr -d '\n')"
-
+          # Store the output in a file to avoid capturing debug information
+          terraform output -raw api_url > api_url.txt
+          API_URL=$(cat api_url.txt)
+      
           if [[ -z "$API_URL" ]]; then
             echo "❌ No 'api_url' found in Terraform outputs."
             echo "ℹ️ Available outputs:"
             terraform output || true
             exit 1
           fi
-
+      
+          # Ensure the URL is properly formed
+          HEALTHCHECK_URL="${API_URL}/healthcheck"
           echo "ℹ️ Using API URL: $API_URL"
-          echo "🔁 Sending GET request to $API_URL/healthcheck..."
-
-          curl --fail --silent --show-error "$API_URL/healthcheck" || {
-            echo "❌ Healthcheck failed at $API_URL/healthcheck"
+          echo "🔁 Sending GET request to $HEALTHCHECK_URL..."
+      
+          curl --fail --silent --show-error "$HEALTHCHECK_URL" || {
+            echo "❌ Healthcheck failed at $HEALTHCHECK_URL"
             exit 1
           }
-
-          echo "✅ Healthcheck passed: $API_URL/healthcheck"
-        
+      
+          echo "✅ Healthcheck passed: $HEALTHCHECK_URL"
+      
 
   terraform-destroy:
     name: Terraform Destroy Infrastructure
