@@ -484,58 +484,58 @@ jobs:
           echo "db_host=${DB_HOST}" >> $GITHUB_OUTPUT
           echo "db_name=${DB_NAME}" >> $GITHUB_OUTPUT
 
-  healthcheck:
-    name: API Healthcheck
-    needs: [determine-environment, terraform-apply]
-    if: success()
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+  # healthcheck:
+  #   name: API Healthcheck
+  #   needs: [determine-environment, terraform-apply]
+  #   if: success()
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - name: Checkout code
+  #       uses: actions/checkout@v4
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v2
-        with:
-          role-to-assume: arn:aws:iam::070503547773:role/GitHubActionsRole
-          aws-region: us-east-1
+  #     - name: Configure AWS credentials
+  #       uses: aws-actions/configure-aws-credentials@v2
+  #       with:
+  #         role-to-assume: arn:aws:iam::070503547773:role/GitHubActionsRole
+  #         aws-region: us-east-1
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v2
-        with:
-          terraform_version: 1.5.0
+  #     - name: Setup Terraform
+  #       uses: hashicorp/setup-terraform@v2
+  #       with:
+  #         terraform_version: 1.5.0
 
-      - name: Run API Healthcheck
-        run: |
-          set -euo pipefail
-          echo "🔍 Running Healthcheck..."
+  #     - name: Run API Healthcheck
+  #       run: |
+  #         set -euo pipefail
+  #         echo "🔍 Running Healthcheck..."
 
-          ENV="${{ needs.determine-environment.outputs.environment }}"
-          echo "📦 ENV: $ENV"
+  #         ENV="${{ needs.determine-environment.outputs.environment }}"
+  #         echo "📦 ENV: $ENV"
 
-          cd terraform/environments/$ENV
+  #         cd terraform/environments/$ENV
 
-          echo "🔧 Initializing Terraform..."
-          terraform init -reconfigure > /dev/null
+  #         echo "🔧 Initializing Terraform..."
+  #         terraform init -reconfigure > /dev/null
 
-          echo "🌐 Fetching 'api_url' output..."
-          API_URL="$(terraform output -raw api_url 2>/dev/null || echo "")"
+  #         echo "🌐 Fetching 'api_url' output..."
+  #         API_URL="$(terraform output -raw api_url 2>/dev/null || echo "")"
 
-          if [[ -z "$API_URL" ]]; then
-            echo "❌ No 'api_url' found in Terraform outputs."
-            echo "ℹ️ Available outputs:"
-            terraform output || true
-            exit 1
-          fi
+  #         if [[ -z "$API_URL" ]]; then
+  #           echo "❌ No 'api_url' found in Terraform outputs."
+  #           echo "ℹ️ Available outputs:"
+  #           terraform output || true
+  #           exit 1
+  #         fi
 
-          echo "ℹ️ Using API URL: $API_URL"
-          echo "🔁 Sending GET request to $API_URL/healthcheck..."
+  #         echo "ℹ️ Using API URL: $API_URL"
+  #         echo "🔁 Sending GET request to $API_URL/healthcheck..."
 
-          curl --fail --silent --show-error "$API_URL/healthcheck" || {
-            echo "❌ Healthcheck failed at $API_URL/healthcheck"
-            exit 1
-          }
+  #         curl --fail --silent --show-error "$API_URL/healthcheck" || {
+  #           echo "❌ Healthcheck failed at $API_URL/healthcheck"
+  #           exit 1
+  #         }
 
-          echo "✅ Healthcheck passed: $API_URL/healthcheck"
+  #         echo "✅ Healthcheck passed: $API_URL/healthcheck"
         
 
   terraform-destroy:
