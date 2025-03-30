@@ -48,13 +48,8 @@ on:
         type: boolean
       destroy_infrastructure:
         description: 'Destroy Infrastructure'
-        required: false
-        default: false
-        type: boolean
-      destroy_only:
-        description: 'Only run the destroy job (will ignore other options)'
-        required: false
-        default: false
+        required: true
+        default: true
         type: boolean
 
 permissions:
@@ -145,8 +140,7 @@ jobs:
     needs: [determine-environment, changes]
     if: |
       needs.changes.outputs.terraform == 'true' &&
-      (github.event_name == 'push' || 
-       (github.event_name == 'workflow_dispatch' && github.event.inputs.destroy_only != 'true'))
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     steps:
       - uses: actions/checkout@v4
 
@@ -173,10 +167,7 @@ jobs:
     name: Terraform Plan
     needs: [determine-environment, changes]
     if: |
-      (github.event_name == 'workflow_dispatch' && 
-       github.event.inputs.run_infrastructure == 'true' && 
-       github.event.inputs.destroy_infrastructure == 'false' && 
-       github.event.inputs.destroy_only != 'true') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.run_infrastructure == 'true' && github.event.inputs.destroy_infrastructure == 'false') ||
       (
         github.event_name != 'workflow_dispatch' &&
         needs.changes.outputs.terraform == 'true' &&
@@ -282,10 +273,7 @@ jobs:
     name: Build Lambda Package
     needs: [determine-environment, terraform-plan]
     if: |
-      (github.event_name == 'workflow_dispatch' && 
-       github.event.inputs.build_and_deploy == 'true' && 
-       github.event.inputs.destroy_infrastructure == 'false' && 
-       github.event.inputs.destroy_only != 'true') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.build_and_deploy == 'true' && github.event.inputs.destroy_infrastructure == 'false') ||
       (
         github.event_name != 'workflow_dispatch' &&
         needs.changes.outputs.lambda == 'true' &&
@@ -372,9 +360,7 @@ jobs:
     name: Terraform Apply Infrastructure
     needs: [determine-environment, terraform-plan, build-lambda-package]
     if: |
-      (github.event_name == 'workflow_dispatch' && 
-       github.event.inputs.run_infrastructure == 'true' && 
-       github.event.inputs.destroy_only != 'true') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.run_infrastructure == 'true') ||
       (
         github.event_name != 'workflow_dispatch' &&
         needs.changes.outputs.terraform == 'true' &&
@@ -503,9 +489,7 @@ jobs:
   healthcheck:
     name: API Healthcheck
     needs: [determine-environment, terraform-apply]
-    if: |
-      success() && 
-      (github.event_name != 'workflow_dispatch' || github.event.inputs.destroy_only != 'true')
+    if: success()
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -561,21 +545,18 @@ jobs:
           echo "✅ Healthcheck passed: $HEALTHCHECK_URL"
       
 
-  standalone-destroy:
-    name: Standalone Destroy Infrastructure
-    # This job runs ONLY when destroy_only is true
-    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.destroy_only == 'true' }}
+  terraform-destroy:
+    name: Terraform Destroy Infrastructure
+    needs: [determine-environment]
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.destroy_infrastructure == true
     runs-on: ubuntu-latest
-    environment: ${{ github.event.inputs.environment }}
+    environment: ${{ needs.determine-environment.outputs.environment }}
     steps:
-      - name: Debug workflow inputs
-        run: |
-          echo "Event name: ${{ github.event_name }}"
-          echo "Environment: ${{ github.event.inputs.environment }}"
-          echo "destroy_only: ${{ github.event.inputs.destroy_only }}"
-      
-      - name: Checkout code
+      - name: Checkout development branch if push, else default
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'push' && github.ref == 'refs/heads/development' && 'development' || '' }}
+          fetch-depth: 0
 
       - name: Configure AWS credentials with Role
         uses: aws-actions/configure-aws-credentials@v2
@@ -603,23 +584,16 @@ jobs:
           BUCKET_NAME="terraform-state-${{ github.repository_owner }}-${{ github.event.repository.name }}"
           BUCKET_EXISTS=$(aws s3api head-bucket --bucket $BUCKET_NAME 2>&1 || echo "not exists")
           if [[ $BUCKET_EXISTS == *"not exists"* ]]; then
+            echo "create_bucket=true" >> $GITHUB_OUTPUT
             echo "bucket_name=$BUCKET_NAME" >> $GITHUB_OUTPUT
           else
+            echo "create_bucket=false" >> $GITHUB_OUTPUT
             echo "bucket_name=$BUCKET_NAME" >> $GITHUB_OUTPUT
           fi
 
-      - name: Get tfvars file
-        id: get-tfvars
-        run: |
-          ENVIRONMENT="${{ github.event.inputs.environment }}"
-          TFVARS_FILE="terraform/config/${ENVIRONMENT}.tfvars"
-          echo "tfvars_file=$TFVARS_FILE" >> $GITHUB_OUTPUT
-          echo "Using tfvars file: $TFVARS_FILE"
-
       - name: Update backend configuration
         run: |
-          ENVIRONMENT="${{ github.event.inputs.environment }}"
-          
+          ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
           mkdir -p terraform/environments/$ENVIRONMENT
           cat <<EOF > terraform/environments/$ENVIRONMENT/backend.tf
           terraform {
@@ -633,26 +607,13 @@ jobs:
 
       - name: Terraform Init
         run: |
-          ENVIRONMENT="${{ github.event.inputs.environment }}"
+          ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
           cd terraform/environments/$ENVIRONMENT
-          terraform init -reconfigure
+          terraform init
 
       - name: Terraform Destroy
         run: |
-          ENVIRONMENT="${{ github.event.inputs.environment }}"
-          TFVARS_FILE="${{ steps.get-tfvars.outputs.tfvars_file }}"
+          ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
+          TFVARS_FILE="${{ needs.determine-environment.outputs.tfvars_file }}"
           cd terraform/environments/$ENVIRONMENT
-          
-          echo "Running terraform destroy with vars file: $TFVARS_FILE"
-          terraform destroy -auto-approve -var-file=../../config/$ENVIRONMENT.tfvars
-
-  # Modify the existing terraform-destroy job condition to avoid running it when destroy_only=true
-  terraform-destroy:
-    name: Terraform Destroy Infrastructure
-    needs: [determine-environment]
-    if: |
-      github.event_name == 'workflow_dispatch' && 
-      github.event.inputs.destroy_infrastructure == 'true' && 
-      github.event.inputs.destroy_only != 'true'
-    runs-on: ubuntu-latest
-    environment: ${{ needs.determine-environment.outputs.environment }}
+          terraform destroy -auto-approve -var-file=$TFVARS_FILE 
