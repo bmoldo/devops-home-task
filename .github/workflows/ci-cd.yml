@@ -548,7 +548,7 @@ jobs:
   terraform-destroy:
     name: Terraform Destroy Infrastructure
     needs: [determine-environment]
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.destroy_infrastructure == true
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.destroy_infrastructure == 'true'
     runs-on: ubuntu-latest
     environment: ${{ needs.determine-environment.outputs.environment }}
     steps:
