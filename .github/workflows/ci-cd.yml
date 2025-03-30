@@ -48,8 +48,13 @@ on:
         type: boolean
       destroy_infrastructure:
         description: 'Destroy Infrastructure'
-        required: true
-        default: true
+        required: false
+        default: false
+        type: boolean
+      destroy_only:
+        description: 'Only run the destroy job (will ignore other options)'
+        required: false
+        default: false
         type: boolean
 
 permissions:
@@ -140,7 +145,8 @@ jobs:
     needs: [determine-environment, changes]
     if: |
       needs.changes.outputs.terraform == 'true' &&
-      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      (github.event_name == 'push' || 
+       (github.event_name == 'workflow_dispatch' && github.event.inputs.destroy_only != 'true'))
     steps:
       - uses: actions/checkout@v4
 
@@ -167,7 +173,10 @@ jobs:
     name: Terraform Plan
     needs: [determine-environment, changes]
     if: |
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.run_infrastructure == 'true' && github.event.inputs.destroy_infrastructure == 'false') ||
+      (github.event_name == 'workflow_dispatch' && 
+       github.event.inputs.run_infrastructure == 'true' && 
+       github.event.inputs.destroy_infrastructure == 'false' && 
+       github.event.inputs.destroy_only != 'true') ||
       (
         github.event_name != 'workflow_dispatch' &&
         needs.changes.outputs.terraform == 'true' &&
@@ -273,7 +282,10 @@ jobs:
     name: Build Lambda Package
     needs: [determine-environment, terraform-plan]
     if: |
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.build_and_deploy == 'true' && github.event.inputs.destroy_infrastructure == 'false') ||
+      (github.event_name == 'workflow_dispatch' && 
+       github.event.inputs.build_and_deploy == 'true' && 
+       github.event.inputs.destroy_infrastructure == 'false' && 
+       github.event.inputs.destroy_only != 'true') ||
       (
         github.event_name != 'workflow_dispatch' &&
         needs.changes.outputs.lambda == 'true' &&
@@ -360,7 +372,9 @@ jobs:
     name: Terraform Apply Infrastructure
     needs: [determine-environment, terraform-plan, build-lambda-package]
     if: |
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.run_infrastructure == 'true') ||
+      (github.event_name == 'workflow_dispatch' && 
+       github.event.inputs.run_infrastructure == 'true' && 
+       github.event.inputs.destroy_only != 'true') ||
       (
         github.event_name != 'workflow_dispatch' &&
         needs.changes.outputs.terraform == 'true' &&
@@ -489,7 +503,9 @@ jobs:
   healthcheck:
     name: API Healthcheck
     needs: [determine-environment, terraform-apply]
-    if: success()
+    if: |
+      success() && 
+      (github.event_name != 'workflow_dispatch' || github.event.inputs.destroy_only != 'true')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -548,7 +564,9 @@ jobs:
   terraform-destroy:
     name: Terraform Destroy Infrastructure
     needs: [determine-environment]
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.destroy_infrastructure == 'true'
+    if: |
+      github.event_name == 'workflow_dispatch' && 
+      (github.event.inputs.destroy_infrastructure == 'true' || github.event.inputs.destroy_only == 'true')
     runs-on: ubuntu-latest
     environment: ${{ needs.determine-environment.outputs.environment }}
     steps:
@@ -616,4 +634,4 @@ jobs:
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
           TFVARS_FILE="${{ needs.determine-environment.outputs.tfvars_file }}"
           cd terraform/environments/$ENVIRONMENT
-          terraform destroy -auto-approve -var-file=$TFVARS_FILE 
+          terraform destroy -auto-approve -var-file=$TFVARS_FILE
